@@ -221,11 +221,43 @@ test.describe('InputHandler Integration Tests', () => {
       await ctx.proxy.write('1\r\n2\r\n3\r\n4\r\n5');
       await pollFor(ctx.page, () => getLinesAsArray(5), ['1', '2', '3', '4', '5']);
       await ctx.proxy.write('\x1b[S');
-      await pollFor(ctx.page, () => getLinesAsArray(5), ['2', '3', '4', '5', '']);
+      await pollFor(ctx.page, () => getViewportLinesAsArray(5), ['2', '3', '4', '5', '']);
+      deepStrictEqual(await getLinesAsArray(6), ['1', '2', '3', '4', '5', '']);
+      deepStrictEqual(await ctx.proxy.buffer.active.baseY, 1);
       await ctx.proxy.reset();
       await ctx.proxy.write('1\r\n2\r\n3\r\n4\r\n5');
       await ctx.proxy.write('\x1b[2S');
-      await pollFor(ctx.page, () => getLinesAsArray(5), ['3', '4', '5', '', '']);
+      await pollFor(ctx.page, () => getViewportLinesAsArray(5), ['3', '4', '5', '', '']);
+      deepStrictEqual(await getLinesAsArray(7), ['1', '2', '3', '4', '5', '', '']);
+      deepStrictEqual(await ctx.proxy.buffer.active.baseY, 2);
+    });
+    test('CSI Ps S - SU: Preserve a user-scrolled viewport in the normal buffer', async () => {
+      await ctx.proxy.resize(10, 5);
+      await ctx.proxy.write('A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH\r\nI\r\nJ');
+      await ctx.proxy.scrollLines(-2);
+      const viewportBefore = await getDisplayLinesAsArray(5);
+      const viewportYBefore = await ctx.proxy.buffer.active.viewportY;
+
+      await ctx.proxy.write('\x1b[2S');
+
+      deepStrictEqual(await ctx.proxy.buffer.active.baseY, 7);
+      deepStrictEqual(await ctx.proxy.buffer.active.viewportY, viewportYBefore);
+      deepStrictEqual(await getDisplayLinesAsArray(5), viewportBefore);
+      deepStrictEqual(await getLinesAsArray(12), ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', '', '']);
+    });
+    test('CSI Ps S - SU: Preserve a user-scrolled viewport during synchronized repaint', async () => {
+      await ctx.proxy.resize(12, 5);
+      await ctx.proxy.write('A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH\r\nI\r\nJ');
+      await ctx.proxy.scrollLines(-2);
+      const viewportBefore = await getDisplayLinesAsArray(5);
+      const viewportYBefore = await ctx.proxy.buffer.active.viewportY;
+
+      await ctx.proxy.write('\x1b[?2026h\x1b[2S\x1b[4;1Hupdated\x1b[K\x1b[?2026l');
+
+      deepStrictEqual(await ctx.proxy.buffer.active.baseY, 7);
+      deepStrictEqual(await ctx.proxy.buffer.active.viewportY, viewportYBefore);
+      deepStrictEqual(await getDisplayLinesAsArray(5), viewportBefore);
+      deepStrictEqual(await getLinesAsArray(12), ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'updated', '']);
     });
     // This is intentionally not implemented here are image support lives within an addon
     // test.skip('CSI ? Pi ; Pa ; Pv S - XTSMGRAPHICS: Set or request graphics attribute, xterm', async () => {
@@ -1867,6 +1899,14 @@ async function getLinesAsArray(count: number, start: number = 0): Promise<string
     text += `window.term.buffer.active.getLine(${i}).translateToString(true),`;
   }
   return await ctx.page.evaluate(`[${text}]`);
+}
+
+async function getViewportLinesAsArray(count: number): Promise<string[]> {
+  return getLinesAsArray(count, await ctx.proxy.buffer.active.baseY);
+}
+
+async function getDisplayLinesAsArray(count: number): Promise<string[]> {
+  return getLinesAsArray(count, await ctx.proxy.buffer.active.viewportY);
 }
 
 async function simulatePaste(text: string): Promise<string> {

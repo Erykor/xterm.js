@@ -40,6 +40,17 @@ function getLines(bufferService: IBufferService, limit: number = bufferService.r
   return res;
 }
 
+function getLinesFrom(bufferService: IBufferService, start: number, limit: number = bufferService.rows): string[] {
+  const res: string[] = [];
+  for (let i = start; i < start + limit; ++i) {
+    const line = bufferService.buffer.lines.get(i);
+    if (line) {
+      res.push(line.translateToString(true));
+    }
+  }
+  return res;
+}
+
 class TestInputHandler extends InputHandler {
   public get curAttrData(): IAttributeData { return (this as any)._curAttrData; }
   public get windowTitleStack(): string[] { return this._windowTitleStack; }
@@ -73,6 +84,127 @@ describe('InputHandler', () => {
     oscLinkService = new OscLinkService(bufferService);
 
     inputHandler = new TestInputHandler(bufferService, new MockCharsetService(), coreService, new MockLogService(), optionsService, oscLinkService, new MockMouseStateService(), new MockUnicodeService());
+  });
+
+  describe('SU (scrollUp)', () => {
+    beforeEach(() => {
+      bufferService.resize(10, 5);
+      optionsService.options.scrollback = 10;
+      bufferService.reset();
+    });
+
+    it('should add lines scrolled from the top margin to normal buffer scrollback', async () => {
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE');
+      const cursorBefore = getCursor(bufferService);
+
+      await inputHandler.parseP('\x1b[2S');
+
+      assert.equal(bufferService.buffer.ybase, 2);
+      assert.equal(bufferService.buffer.ydisp, 2);
+      assert.equal(bufferService.buffer.lines.length, 7);
+      assert.deepEqual(getLines(bufferService, 7), ['A', 'B', 'C', 'D', 'E', '', '']);
+      assert.deepEqual(getLinesFrom(bufferService, bufferService.buffer.ybase), ['C', 'D', 'E', '', '']);
+      assert.deepEqual(getCursor(bufferService), cursorBefore);
+    });
+
+    it('should keep the viewport stable while the user is scrolled up', async () => {
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH\r\nI\r\nJ');
+      bufferService.scrollLines(-2);
+      const viewportBefore = getLinesFrom(bufferService, bufferService.buffer.ydisp);
+      const ydispBefore = bufferService.buffer.ydisp;
+
+      await inputHandler.parseP('\x1b[2S');
+
+      assert.equal(bufferService.buffer.ybase, 7);
+      assert.equal(bufferService.buffer.ydisp, ydispBefore);
+      assert.equal(bufferService.buffer.lines.length, 12);
+      assert.deepEqual(getLines(bufferService, 12), ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', '', '']);
+      assert.deepEqual(getLinesFrom(bufferService, bufferService.buffer.ydisp), viewportBefore);
+      assert.deepEqual(getLinesFrom(bufferService, bufferService.buffer.ybase), ['H', 'I', 'J', '', '']);
+    });
+
+    it('should keep the viewport stable when scrollback is full', async () => {
+      optionsService.options.scrollback = 2;
+      bufferService.resize(10, 3);
+      bufferService.reset();
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE');
+      bufferService.scrollLines(-1);
+      const viewportBefore = getLinesFrom(bufferService, bufferService.buffer.ydisp, 3);
+
+      await inputHandler.parseP('\x1b[S');
+
+      assert.equal(bufferService.buffer.ybase, 2);
+      assert.equal(bufferService.buffer.ydisp, 0);
+      assert.equal(bufferService.buffer.lines.length, 5);
+      assert.deepEqual(getLines(bufferService, 5), ['B', 'C', 'D', 'E', '']);
+      assert.deepEqual(getLinesFrom(bufferService, bufferService.buffer.ydisp, 3), viewportBefore);
+    });
+
+    it('should scroll in place when normal buffer scrollback is disabled', async () => {
+      optionsService.options.scrollback = 0;
+      bufferService.resize(10, 3);
+      bufferService.reset();
+      await inputHandler.parseP('A\r\nB\r\nC');
+
+      await inputHandler.parseP('\x1b[S');
+
+      assert.equal(bufferService.buffer.ybase, 0);
+      assert.equal(bufferService.buffer.ydisp, 0);
+      assert.equal(bufferService.buffer.lines.length, 3);
+      assert.deepEqual(getLines(bufferService, 3), ['B', 'C', '']);
+    });
+
+    it('should trim markers with lines evicted from full scrollback', async () => {
+      optionsService.options.scrollback = 2;
+      bufferService.resize(10, 3);
+      bufferService.reset();
+      await inputHandler.parseP('A\r\nB\r\nC');
+      const marker = bufferService.buffer.addMarker(0);
+
+      await inputHandler.parseP('\x1b[3S');
+
+      assert.equal(bufferService.buffer.ybase, 2);
+      assert.equal(bufferService.buffer.lines.length, 5);
+      assert.equal(marker.isDisposed, true);
+      assert.deepEqual(getLines(bufferService, 5), ['B', 'C', '', '', '']);
+    });
+
+    it('should preserve the saved screen row when adding scrollback', async () => {
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE');
+      await inputHandler.parseP('\x1b[4;1H\x1b7\x1b[S\x1b8^');
+
+      assert.equal(bufferService.buffer.ybase, 1);
+      assert.equal(bufferService.buffer.savedY, 4);
+      assert.deepEqual(getLines(bufferService, 6), ['A', 'B', 'C', 'D', '^', '']);
+      assert.equal(bufferService.buffer.y, 3);
+    });
+
+    it('should add scrollback when a scroll region starts at the top row', async () => {
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE');
+      await inputHandler.parseP('\x1b[1;3r\x1b[S');
+
+      assert.equal(bufferService.buffer.ybase, 1);
+      assert.deepEqual(getLines(bufferService, 6), ['A', 'B', 'C', '', 'D', 'E']);
+      assert.deepEqual(getLinesFrom(bufferService, bufferService.buffer.ybase), ['B', 'C', '', 'D', 'E']);
+    });
+
+    it('should not add scrollback when a scroll region starts below the top row', async () => {
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE');
+      await inputHandler.parseP('\x1b[2;4r\x1b[S');
+
+      assert.equal(bufferService.buffer.ybase, 0);
+      assert.equal(bufferService.buffer.lines.length, 5);
+      assert.deepEqual(getLines(bufferService), ['A', 'C', 'D', '', 'E']);
+    });
+
+    it('should not add scrollback in the alternate buffer', async () => {
+      await inputHandler.parseP('\x1b[?1049hA\r\nB\r\nC\r\nD\r\nE\x1b[2S');
+
+      assert.equal(bufferService.buffer, bufferService.buffers.alt);
+      assert.equal(bufferService.buffer.ybase, 0);
+      assert.equal(bufferService.buffer.lines.length, 5);
+      assert.deepEqual(getLines(bufferService), ['C', 'D', 'E', '', '']);
+    });
   });
 
   describe('SL/SR/DECIC/DECDC', () => {
@@ -202,6 +334,17 @@ describe('InputHandler', () => {
     assert.equal(inputHandler.curAttrData.fg, 3);
   });
   describe('DECSC/DECRC - save and restore cursor', () => {
+    it('should preserve the saved screen row when output creates scrollback', async () => {
+      bufferService.resize(10, 5);
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE');
+      await inputHandler.parseP('\x1b[4;1H\x1b7\x1b[5;1H\n\x1b8^');
+
+      assert.equal(bufferService.buffer.ybase, 1);
+      assert.equal(bufferService.buffer.savedY, 4);
+      assert.deepEqual(getLines(bufferService, 6), ['A', 'B', 'C', 'D', '^', '']);
+      assert.equal(bufferService.buffer.y, 3);
+    });
+
     it('should save and restore origin mode', async () => {
       assert.equal(coreService.decPrivateModes.origin, false);
       await inputHandler.parseP('\x1b[?6h');

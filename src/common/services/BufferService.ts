@@ -97,6 +97,10 @@ export class BufferService extends Disposable implements IBufferService {
       // Only adjust ybase and ydisp when the buffer is not trimmed
       if (!willBufferBeTrimmed) {
         buffer.ybase++;
+        // savedY is stored as an absolute buffer line, but DECSC/SCOSC save a
+        // screen-relative cursor position. Keep that position stable as the
+        // viewport moves down through newly-created scrollback.
+        buffer.savedY++;
         // Only scroll the ydisp with ybase if the user has not scrolled up
         if (!this.isUserScrolling) {
           buffer.ydisp++;

@@ -1456,12 +1456,23 @@ export class InputHandler extends Disposable implements IInputHandler {
    * CSI Ps S  Scroll up Ps lines (default = 1) (SU).
    *
    * @vt: #Y CSI SU  "Scroll Up"   "CSI Ps S"  "Scroll `Ps` lines up (default=1)."
-   *
-   *
-   * FIXME: scrolled out lines at top = 1 should add to scrollback (xterm)
    */
   public scrollUp(params: IParams): boolean {
     let param = params.params[0] || 1;
+
+    // xterm adds lines scrolled out of a top-anchored region to the normal
+    // buffer's scrollback. Reuse the regular scroll path here so ybase, ydisp,
+    // a user-scrolled viewport, the scrollback cap and markers all update in
+    // exactly the same way as an index at the bottom margin. The alternate
+    // buffer and regions below the top row have no scrollback and must keep
+    // shifting their rows in place.
+    if (this._activeBuffer.hasScrollback && this._activeBuffer.scrollTop === 0) {
+      while (param--) {
+        this._bufferService.scroll(this._eraseAttrData());
+      }
+      this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom);
+      return true;
+    }
 
     while (param--) {
       this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollTop, 1);
