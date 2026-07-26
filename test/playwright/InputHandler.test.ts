@@ -259,6 +259,41 @@ test.describe('InputHandler Integration Tests', () => {
       deepStrictEqual(await getDisplayLinesAsArray(5), viewportBefore);
       deepStrictEqual(await getLinesAsArray(12), ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'updated', '']);
     });
+    test('CSI 2 J - ED2: Preserve an overlapping user viewport during synchronized repaint', async () => {
+      await ctx.proxy.resize(14, 5);
+      await ctx.proxy.write('A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH\r\nI\r\nJ');
+      await ctx.proxy.scrollLines(-2);
+      const viewportBefore = await getDisplayLinesAsArray(5);
+      const viewportYBefore = await ctx.proxy.buffer.active.viewportY;
+
+      await ctx.proxy.write(
+        '\x1b[?2026h\x1b[2;4r\x1b[2J\x1b[H' +
+        'I\x1b[K\x1b[2;1HJ\x1b[K\x1b[3;1Hupdated\x1b[K' +
+        '\x1b[4;1Hstatus\x1b[K\x1b[5;1Hprompt\x1b[K\x1b[?2026l'
+      );
+
+      deepStrictEqual(await ctx.proxy.buffer.active.baseY, 8);
+      deepStrictEqual(await ctx.proxy.buffer.active.viewportY, viewportYBefore);
+      deepStrictEqual(await getDisplayLinesAsArray(5), viewportBefore);
+      deepStrictEqual(await getLinesAsArray(13), [
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+        'I', 'J', 'updated', 'status', 'prompt'
+      ]);
+
+      await ctx.proxy.write(
+        '\x1b[?2026h\x1b[2J\x1b[H' +
+        'I\x1b[K\x1b[2;1HJ\x1b[K\x1b[3;1Hupdated-again\x1b[K' +
+        '\x1b[4;1Hstatus\x1b[K\x1b[5;1Hprompt\x1b[K\x1b[?2026l'
+      );
+
+      deepStrictEqual(await ctx.proxy.buffer.active.baseY, 8);
+      deepStrictEqual(await ctx.proxy.buffer.active.viewportY, viewportYBefore);
+      deepStrictEqual(await getDisplayLinesAsArray(5), viewportBefore);
+      deepStrictEqual(await getLinesAsArray(13), [
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+        'I', 'J', 'updated-again', 'status', 'prompt'
+      ]);
+    });
     // This is intentionally not implemented here are image support lives within an addon
     // test.skip('CSI ? Pi ; Pa ; Pv S - XTSMGRAPHICS: Set or request graphics attribute, xterm', async () => {
     // });

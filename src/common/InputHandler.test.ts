@@ -656,6 +656,73 @@ describe('InputHandler', () => {
       // Screen should have been scrolled by a full screen size.
       assert.equal(bufferService.rows * 2 + 2, bufferService.buffer.lines.length);
     });
+    it('ED2 in synchronized output preserves an overlapping user viewport once', async () => {
+      bufferService.resize(14, 5);
+      optionsService.options.scrollback = 20;
+      bufferService.reset();
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH\r\nI\r\nJ');
+      bufferService.scrollLines(-2);
+      const viewportBefore = getLinesFrom(bufferService, bufferService.buffer.ydisp, 5);
+      const ydispBefore = bufferService.buffer.ydisp;
+
+      await inputHandler.parseP(
+        '\x1b[?2026h\x1b[2;4r\x1b[2J\x1b[H' +
+        'I\x1b[K\x1b[2;1HJ\x1b[K\x1b[3;1Hupdated\x1b[K' +
+        '\x1b[4;1Hstatus\x1b[K\x1b[5;1Hprompt\x1b[K\x1b[?2026l'
+      );
+
+      assert.equal(bufferService.buffer.ybase, 8);
+      assert.equal(bufferService.buffer.ydisp, ydispBefore);
+      assert.equal(bufferService.buffer.scrollTop, 1);
+      assert.equal(bufferService.buffer.scrollBottom, 3);
+      assert.deepEqual(getLinesFrom(bufferService, bufferService.buffer.ydisp, 5), viewportBefore);
+      assert.deepEqual(getLines(bufferService, 13), [
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+        'I', 'J', 'updated', 'status', 'prompt'
+      ]);
+
+      // Once the viewport no longer overlaps the live screen, later frames
+      // must repaint in place instead of appending duplicate snapshots.
+      await inputHandler.parseP(
+        '\x1b[?2026h\x1b[2J\x1b[H' +
+        'I\x1b[K\x1b[2;1HJ\x1b[K\x1b[3;1Hupdated-again\x1b[K' +
+        '\x1b[4;1Hstatus\x1b[K\x1b[5;1Hprompt\x1b[K\x1b[?2026l'
+      );
+
+      assert.equal(bufferService.buffer.ybase, 8);
+      assert.equal(bufferService.buffer.ydisp, ydispBefore);
+      assert.deepEqual(getLinesFrom(bufferService, bufferService.buffer.ydisp, 5), viewportBefore);
+      assert.deepEqual(getLines(bufferService, 13), [
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+        'I', 'J', 'updated-again', 'status', 'prompt'
+      ]);
+    });
+    it('ED2 viewport preservation is scoped to synchronized normal-buffer scrollback', async () => {
+      bufferService.resize(14, 5);
+      optionsService.options.scrollback = 20;
+      bufferService.reset();
+      await inputHandler.parseP('A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH\r\nI\r\nJ');
+      bufferService.scrollLines(-2);
+
+      // Outside mode 2026, ED2 keeps its normal in-place erase semantics.
+      await inputHandler.parseP('\x1b[2J');
+      assert.equal(bufferService.buffer.ybase, 5);
+      assert.equal(bufferService.buffer.ydisp, 3);
+
+      // At the bottom there is no user viewport to detach.
+      bufferService.scrollLines(2);
+      await inputHandler.parseP('\x1b[?2026h\x1b[2J\x1b[?2026l');
+      assert.equal(bufferService.buffer.ybase, 5);
+      assert.equal(bufferService.buffer.ydisp, 5);
+
+      // Alternate buffers never gain scrollback, even if the global
+      // user-scrolling flag was set by the normal buffer.
+      bufferService.isUserScrolling = true;
+      await inputHandler.parseP('\x1b[?1049hALT\x1b[?2026h\x1b[2J\x1b[?2026l');
+      assert.equal(bufferService.buffer, bufferService.buffers.alt);
+      assert.equal(bufferService.buffer.ybase, 0);
+      assert.equal(bufferService.buffer.lines.length, 5);
+    });
     it('eraseInDisplay', async () => {
       const bufferService = new MockBufferService(80, 7);
       const inputHandler = new TestInputHandler(
