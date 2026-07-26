@@ -160,6 +160,9 @@ export class Terminal extends Disposable implements ITerminalApi {
   public attachCustomViewportScrollHandler(customViewportScrollHandler: (amount: number) => void | Promise<void>): void {
     this._core.attachCustomViewportScrollHandler(customViewportScrollHandler);
   }
+  public attachCustomSelectionHandler(customSelectionHandler: (event: MouseEvent) => void | Promise<void>): void {
+    this._core.attachCustomSelectionHandler(customSelectionHandler);
+  }
   public registerLinkProvider(linkProvider: ILinkProvider): IDisposable {
     return this._core.registerLinkProvider(linkProvider);
   }

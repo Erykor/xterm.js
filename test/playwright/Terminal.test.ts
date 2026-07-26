@@ -99,6 +99,65 @@ test.describe('API Integration Tests', () => {
     );
   });
 
+  test('custom selection handler defers cell reads until its frontier', async () => {
+    await openTerminal(ctx);
+    await ctx.proxy.write('stable framebuffer');
+    await ctx.proxy.selectAll();
+    const dims = (await ctx.proxy.dimensions)!;
+    const termRect: any = await ctx.page.evaluate(
+      `window.term.element.getBoundingClientRect()`,
+    );
+    const x = termRect.left + dims.css.cell.width * 2;
+    const y = termRect.top + dims.css.cell.height * 0.5;
+    await ctx.page.evaluate(() => {
+      let release: (() => void) | undefined;
+      (window as any).__selectionFrontier = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      (window as any).__releaseSelectionFrontier = release;
+      (window as any).term.attachCustomSelectionHandler(
+        () => (window as any).__selectionFrontier,
+      );
+    });
+
+    await ctx.page.mouse.move(x, y);
+    await ctx.page.mouse.down();
+    await timeout(20);
+    strictEqual(await ctx.proxy.hasSelection(), true);
+    await ctx.page.evaluate(() =>
+      (window as any).__releaseSelectionFrontier());
+    await pollFor(ctx.page, `window.term.hasSelection()`, false);
+    await ctx.page.mouse.up();
+  });
+
+  test('custom selection handler cancels a gesture released before its frontier', async () => {
+    await openTerminal(ctx);
+    await ctx.proxy.write('stable framebuffer');
+    await ctx.proxy.selectAll();
+    const dims = (await ctx.proxy.dimensions)!;
+    const termRect: any = await ctx.page.evaluate(
+      `window.term.element.getBoundingClientRect()`,
+    );
+    const x = termRect.left + dims.css.cell.width * 2;
+    const y = termRect.top + dims.css.cell.height * 0.5;
+    await ctx.page.evaluate(() => {
+      let release: (() => void) | undefined;
+      (window as any).__selectionFrontier = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      (window as any).__releaseSelectionFrontier = release;
+      (window as any).term.attachCustomSelectionHandler(
+        () => (window as any).__selectionFrontier,
+      );
+    });
+
+    await ctx.page.mouse.click(x, y);
+    await ctx.page.evaluate(() =>
+      (window as any).__releaseSelectionFrontier());
+    await timeout(20);
+    strictEqual(await ctx.proxy.hasSelection(), true);
+  });
+
   test('write - bytes (UTF8)', async () => {
     await openTerminal(ctx);
     await ctx.page.evaluate(`

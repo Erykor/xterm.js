@@ -1235,6 +1235,15 @@ declare module '@xterm/xterm' {
     ): void;
 
     /**
+     * Attaches a handler that runs before a mouse selection reads or mutates
+     * the selection model. Returning a promise defers selection until it
+     * resolves; releasing the mouse first cancels the deferred gesture.
+     */
+    attachCustomSelectionHandler(
+      customSelectionHandler: (event: MouseEvent) => void | Promise<void>
+    ): void;
+
+    /**
      * Registers a link provider, allowing a custom parser to be used to match
      * and handle links. Multiple link providers can be used, they will be asked
      * in the order in which they are registered.

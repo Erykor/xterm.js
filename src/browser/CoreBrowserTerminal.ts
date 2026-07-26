@@ -25,7 +25,7 @@ import { IDecoration, IDecorationOptions, IDisposable, ILinkProvider, IMarker, I
 import { copyHandler, handlePasteEvent, moveTextAreaUnderMouseCursor, paste, rightClickHandler } from './Clipboard';
 import * as Strings from './LocalizableStrings';
 import { OscLinkProvider } from './OscLinkProvider';
-import { CharacterJoinerHandler, CustomKeyEventHandler, CustomViewportScrollHandler, CustomWheelEventHandler, IBrowser, IBufferRange, ICompositionHelper, ILinkifier2, ITerminal } from './Types';
+import { CharacterJoinerHandler, CustomKeyEventHandler, CustomSelectionHandler, CustomViewportScrollHandler, CustomWheelEventHandler, IBrowser, IBufferRange, ICompositionHelper, ILinkifier2, ITerminal } from './Types';
 import { Viewport } from './Viewport';
 import { BufferDecorationRenderer } from './decorations/BufferDecorationRenderer';
 import { OverviewRulerRenderer } from './decorations/OverviewRulerRenderer';
@@ -79,6 +79,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
 
   private _customKeyEventHandler: CustomKeyEventHandler | undefined;
   private _customViewportScrollHandler: CustomViewportScrollHandler | undefined;
+  private _customSelectionHandler: CustomSelectionHandler | undefined;
 
   // Browser services
   private readonly _decorationService: DecorationService;
@@ -200,6 +201,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     this._register(toDisposable(() => {
       this._customKeyEventHandler = undefined;
       this._customViewportScrollHandler = undefined;
+      this._customSelectionHandler = undefined;
       this.element?.parentNode?.removeChild(this.element);
     }));
   }
@@ -614,7 +616,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     }));
 
     this._register(this._instantiationService.createInstance(BufferDecorationRenderer, this.screenElement));
-    this._register(addDisposableListener(this.element, 'mousedown', (e: MouseEvent) => this._selectionService!.handleMouseDown(e)));
+    this._register(addDisposableListener(this.element, 'mousedown', (e: MouseEvent) => this._handleSelectionMouseDown(e)));
 
     // apply mouse event classes set by escape codes before terminal was attached
     if (this.mouseStateService.areMouseEventsActive && !this.options.mouseEventsRequireAlt) {
@@ -744,6 +746,60 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
 
   public attachCustomViewportScrollHandler(customViewportScrollHandler: CustomViewportScrollHandler): void {
     this._customViewportScrollHandler = customViewportScrollHandler;
+  }
+
+  public attachCustomSelectionHandler(customSelectionHandler: CustomSelectionHandler): void {
+    this._customSelectionHandler = customSelectionHandler;
+  }
+
+  private _handleSelectionMouseDown(event: MouseEvent): void {
+    const apply = (): void => {
+      if (!this._store.isDisposed) {
+        this._selectionService?.handleMouseDown(event);
+      }
+    };
+    if (!this._customSelectionHandler) {
+      apply();
+      return;
+    }
+
+    let frontier: void | Promise<void>;
+    try {
+      frontier = this._customSelectionHandler(event);
+    } catch (err) {
+      this._logService.error('Custom selection handler failed', err);
+      return;
+    }
+    if (!frontier) {
+      apply();
+      return;
+    }
+
+    // No selection model may observe cells until the consumer's framebuffer
+    // frontier is stable. If the button is released first, cancel the deferred
+    // gesture instead of installing document drag listeners after its mouseup.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    let released = false;
+    const document = this.element?.ownerDocument;
+    const onMouseUp = (e: MouseEvent): void => {
+      if (e.button === event.button) {
+        released = true;
+      }
+    };
+    // Do not use `once`: an unrelated button can be released while the
+    // selection button remains held, and must not disarm this cancellation
+    // guard.
+    document?.addEventListener('mouseup', onMouseUp, true);
+    frontier.then(() => {
+      document?.removeEventListener('mouseup', onMouseUp, true);
+      if (!released) {
+        apply();
+      }
+    }, err => {
+      document?.removeEventListener('mouseup', onMouseUp, true);
+      this._logService.error('Custom selection handler failed', err);
+    });
   }
 
   private _requestViewportScroll(amount: number): void {
@@ -1141,6 +1197,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     this.options.cols = this.cols;
     const customKeyEventHandler = this._customKeyEventHandler;
     const customViewportScrollHandler = this._customViewportScrollHandler;
+    const customSelectionHandler = this._customSelectionHandler;
 
     this._setup();
     super.reset();
@@ -1151,6 +1208,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     // reattach
     this._customKeyEventHandler = customKeyEventHandler;
     this._customViewportScrollHandler = customViewportScrollHandler;
+    this._customSelectionHandler = customSelectionHandler;
 
     // do a full screen refresh
     this.refresh(0, this.rows - 1, true);

@@ -99,6 +99,9 @@ export class MockTerminal implements ITerminal {
   public attachCustomViewportScrollHandler(customViewportScrollHandler: (amount: number) => void | Promise<void>): void {
     throw new Error('Method not implemented.');
   }
+  public attachCustomSelectionHandler(customSelectionHandler: (event: MouseEvent) => void | Promise<void>): void {
+    throw new Error('Method not implemented.');
+  }
   public pauseWrites(): Promise<void> {
     throw new Error('Method not implemented.');
   }
