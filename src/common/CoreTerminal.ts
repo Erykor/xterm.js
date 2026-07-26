@@ -56,6 +56,8 @@ export interface ICoreTerminal {
   registerEscHandler(id: IFunctionIdentifier, callback: () => boolean | Promise<boolean>): IDisposable;
   registerOscHandler(ident: number, callback: (data: string) => boolean | Promise<boolean>): IDisposable;
   registerApcHandler(id: IFunctionIdentifier, callback: (data: string) => boolean | Promise<boolean>): IDisposable;
+  pauseWrites(): Promise<void>;
+  resumeWrites(): void;
 }
 
 export abstract class CoreTerminal extends Disposable implements ICoreTerminal {
@@ -161,6 +163,20 @@ export abstract class CoreTerminal extends Disposable implements ICoreTerminal {
 
   public write(data: string | Uint8Array, callback?: () => void): void {
     this._writeBuffer.write(data, callback);
+  }
+
+  /**
+   * Pause before the next queued write chunk is parsed.
+   */
+  public pauseWrites(): Promise<void> {
+    return this._writeBuffer.pause();
+  }
+
+  /**
+   * Resume parsing chunks retained by {@link pauseWrites}.
+   */
+  public resumeWrites(): void {
+    this._writeBuffer.resume();
   }
 
   /**

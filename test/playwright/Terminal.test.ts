@@ -52,6 +52,53 @@ test.describe('API Integration Tests', () => {
     await pollFor(ctx.page, `window.__x`, 'abc');
   });
 
+  test('pauseWrites parks queued parser chunks until resumeWrites', async () => {
+    await openTerminal(ctx);
+    const parked = await ctx.page.evaluate(async () => {
+      (window as any).term.write('parked');
+      await (window as any).term.pauseWrites();
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return (window as any).term.buffer.active
+        .getLine(0)?.translateToString(true);
+    });
+    strictEqual(parked, '');
+    await ctx.page.evaluate(() => (window as any).term.resumeWrites());
+    await pollFor(
+      ctx.page,
+      `window.term.buffer.active.getLine(0).translateToString(true)`,
+      'parked',
+    );
+  });
+
+  test('custom viewport scroll handler defers the buffer mutation', async () => {
+    await openTerminal(ctx, { rows: 5 });
+    await ctx.proxy.write('\r\n'.repeat(10));
+    const bottom = await ctx.proxy.buffer.active.baseY;
+    await ctx.page.evaluate(() => {
+      let release: (() => void) | undefined;
+      (window as any).__viewportFrontier = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      (window as any).__releaseViewportFrontier = release;
+      (window as any).__viewportScrollAmount = undefined;
+      (window as any).term.attachCustomViewportScrollHandler(
+        (amount: number) => {
+          (window as any).__viewportScrollAmount = amount;
+          return (window as any).__viewportFrontier;
+        });
+      (window as any).term.scrollLines(-2);
+    });
+    await pollFor(ctx.page, `window.__viewportScrollAmount`, -2);
+    strictEqual(await ctx.proxy.buffer.active.viewportY, bottom);
+    await ctx.page.evaluate(() =>
+      (window as any).__releaseViewportFrontier());
+    await pollFor(
+      ctx.page,
+      `window.term.buffer.active.viewportY`,
+      bottom - 2,
+    );
+  });
+
   test('write - bytes (UTF8)', async () => {
     await openTerminal(ctx);
     await ctx.page.evaluate(`

@@ -127,6 +127,9 @@ type TerminalProxyCustomOverrides = 'buffer' | 'dimensions' | (
   'open' |
   'attachCustomKeyEventHandler' |
   'attachCustomWheelEventHandler' |
+  'attachCustomViewportScrollHandler' |
+  'pauseWrites' |
+  'resumeWrites' |
   'registerLinkProvider' |
   'registerCharacterJoiner' |
   'deregisterCharacterJoiner' |

@@ -1224,6 +1224,17 @@ declare module '@xterm/xterm' {
     attachCustomWheelEventHandler(customWheelEventHandler: (event: WheelEvent) => boolean): void;
 
     /**
+     * Attaches a handler that runs before a viewport navigation changes the
+     * terminal's display position. Returning a promise keeps the viewport at
+     * its current position until that promise resolves.
+     * @param customViewportScrollHandler The handler to attach. `amount` is the
+     * requested number of rows, where a negative value scrolls upward.
+     */
+    attachCustomViewportScrollHandler(
+      customViewportScrollHandler: (amount: number) => void | Promise<void>
+    ): void;
+
+    /**
      * Registers a link provider, allowing a custom parser to be used to match
      * and handle links. Multiple link providers can be used, they will be asked
      * in the order in which they are registered.
@@ -1379,6 +1390,18 @@ declare module '@xterm/xterm' {
      * {@link buffer} to reflect the change in the write.
      */
     write(data: string | Uint8Array, callback?: () => void): void;
+
+    /**
+     * Pauses asynchronous writes at the next complete parser chunk. Writes
+     * already queued and writes added while paused remain ordered in memory.
+     * The promise resolves when no parser continuation is in flight.
+     */
+    pauseWrites(): Promise<void>;
+
+    /**
+     * Resumes writes retained by {@link pauseWrites}.
+     */
+    resumeWrites(): void;
 
     /**
      * Writes data to the terminal, followed by a break line character (\n).

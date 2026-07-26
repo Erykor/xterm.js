@@ -1257,9 +1257,6 @@ export class InputHandler extends Disposable implements IInputHandler {
         this._dirtyRowTracker.markDirty(0);
         break;
       case 2:
-        if (!respectProtect) {
-          this._preserveUserScrolledViewportForSynchronizedErase();
-        }
         if (this._optionsService.rawOptions.scrollOnEraseInDisplay) {
           j = this._bufferService.rows;
           this._dirtyRowTracker.markRangeDirty(0, j - 1);
@@ -1295,52 +1292,6 @@ export class InputHandler extends Disposable implements IInputHandler {
         break;
     }
     return true;
-  }
-
-  /**
-   * Move the part of the live screen visible in a user-scrolled viewport into
-   * scrollback before ED2 clears it.
-   *
-   * Synchronized output freezes rendering, not buffer mutations. Inline TUIs
-   * such as Codex can therefore clear rows which are still on screen for a
-   * user who has only scrolled up part of a viewport. Advancing ybase by the
-   * overlap makes those rows historical before the erase. Once detached, later
-   * repaint frames have no overlap and do not append duplicate snapshots.
-   */
-  private _preserveUserScrolledViewportForSynchronizedErase(): void {
-    const buffer = this._activeBuffer;
-    if (
-      !this._coreService.decPrivateModes.synchronizedOutput ||
-      !this._bufferService.isUserScrolling ||
-      !buffer.hasScrollback
-    ) {
-      return;
-    }
-
-    let overlap = Math.min(
-      this._bufferService.rows,
-      buffer.ydisp + this._bufferService.rows - buffer.ybase
-    );
-    if (overlap <= 0) {
-      return;
-    }
-
-    // ED2 ignores DECSTBM margins, so preservation must do the same. The
-    // current live screen is about to be erased in full, making this temporary
-    // full-screen scroll equivalent while allowing BufferService to update
-    // ybase, markers, savedY and scrollback trimming consistently.
-    const scrollTop = buffer.scrollTop;
-    const scrollBottom = buffer.scrollBottom;
-    buffer.scrollTop = 0;
-    buffer.scrollBottom = this._bufferService.rows - 1;
-    try {
-      while (overlap-- > 0) {
-        this._bufferService.scroll(this._eraseAttrData());
-      }
-    } finally {
-      buffer.scrollTop = scrollTop;
-      buffer.scrollBottom = scrollBottom;
-    }
   }
 
   /**

@@ -25,7 +25,7 @@ import { IDecoration, IDecorationOptions, IDisposable, ILinkProvider, IMarker, I
 import { copyHandler, handlePasteEvent, moveTextAreaUnderMouseCursor, paste, rightClickHandler } from './Clipboard';
 import * as Strings from './LocalizableStrings';
 import { OscLinkProvider } from './OscLinkProvider';
-import { CharacterJoinerHandler, CustomKeyEventHandler, CustomWheelEventHandler, IBrowser, IBufferRange, ICompositionHelper, ILinkifier2, ITerminal } from './Types';
+import { CharacterJoinerHandler, CustomKeyEventHandler, CustomViewportScrollHandler, CustomWheelEventHandler, IBrowser, IBufferRange, ICompositionHelper, ILinkifier2, ITerminal } from './Types';
 import { Viewport } from './Viewport';
 import { BufferDecorationRenderer } from './decorations/BufferDecorationRenderer';
 import { OverviewRulerRenderer } from './decorations/OverviewRulerRenderer';
@@ -78,6 +78,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
   public browser: IBrowser = Browser as any;
 
   private _customKeyEventHandler: CustomKeyEventHandler | undefined;
+  private _customViewportScrollHandler: CustomViewportScrollHandler | undefined;
 
   // Browser services
   private readonly _decorationService: DecorationService;
@@ -198,6 +199,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
 
     this._register(toDisposable(() => {
       this._customKeyEventHandler = undefined;
+      this._customViewportScrollHandler = undefined;
       this.element?.parentNode?.removeChild(this.element);
     }));
   }
@@ -582,10 +584,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     this._register(this.onFocus(() => this._renderService!.handleFocus()));
 
     this._viewport = this._register(this._instantiationService.createInstance(Viewport, this.element, this.screenElement));
-    this._register(this._viewport.onRequestScrollLines(e => {
-      super.scrollLines(e, false);
-      this.refresh(0, this.rows - 1);
-    }));
+    this._register(this._viewport.onRequestScrollLines(e => this._requestViewportScroll(e)));
 
     this._selectionService = this._register(this._instantiationService.createInstance(SelectionService,
       this.element,
@@ -741,6 +740,44 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
 
   public attachCustomWheelEventHandler(customWheelEventHandler: CustomWheelEventHandler): void {
     this.mouseStateService.setCustomWheelEventHandler(customWheelEventHandler);
+  }
+
+  public attachCustomViewportScrollHandler(customViewportScrollHandler: CustomViewportScrollHandler): void {
+    this._customViewportScrollHandler = customViewportScrollHandler;
+  }
+
+  private _requestViewportScroll(amount: number): void {
+    const apply = (): void => {
+      if (this._store.isDisposed) {
+        return;
+      }
+      super.scrollLines(amount, false);
+      this.refresh(0, this.rows - 1);
+    };
+    if (!this._customViewportScrollHandler) {
+      apply();
+      return;
+    }
+
+    let frontier: void | Promise<void>;
+    try {
+      frontier = this._customViewportScrollHandler(amount);
+    } catch (err) {
+      this._logService.error('Custom viewport scroll handler failed', err);
+      return;
+    }
+    if (!frontier) {
+      apply();
+      return;
+    }
+
+    // The scrollable model moves before it asks the terminal buffer to follow.
+    // Put it back while the consumer establishes its parser frontier so neither
+    // the scrollbar nor the rendered rows advertise an uncommitted position.
+    this._viewport?.scrollToLine(this.buffer.ydisp, true);
+    frontier.then(apply, err => {
+      this._logService.error('Custom viewport scroll handler failed', err);
+    });
   }
 
   public registerLinkProvider(linkProvider: ILinkProvider): IDisposable {
@@ -1103,6 +1140,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     this.options.rows = this.rows;
     this.options.cols = this.cols;
     const customKeyEventHandler = this._customKeyEventHandler;
+    const customViewportScrollHandler = this._customViewportScrollHandler;
 
     this._setup();
     super.reset();
@@ -1112,6 +1150,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
 
     // reattach
     this._customKeyEventHandler = customKeyEventHandler;
+    this._customViewportScrollHandler = customViewportScrollHandler;
 
     // do a full screen refresh
     this.refresh(0, this.rows - 1, true);

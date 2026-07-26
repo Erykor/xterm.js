@@ -41,6 +41,10 @@ export class WriteBuffer extends Disposable {
   private _isSyncWriting = false;
   private _syncCalls = 0;
   private _didUserInput = false;
+  private _isPaused = false;
+  private _isParsing = false;
+  private _pausePromise: Promise<void> | undefined;
+  private _resolvePause: (() => void) | undefined;
 
   private readonly _innerWriteTimer = this._register(new TimeoutTimer());
   private readonly _onWriteParsed = this._register(new Emitter<void>());
@@ -53,11 +57,52 @@ export class WriteBuffer extends Disposable {
       this._callbacks.length = 0;
       this._pendingData = 0;
       this._bufferOffset = 0;
+      this._settlePause();
     }));
   }
 
   public handleUserInput(): void {
     this._didUserInput = true;
+  }
+
+  /**
+   * Stop before the next queued chunk is parsed. A parser continuation that is
+   * already suspended in an asynchronous handler is allowed to finish its
+   * current chunk, making the resolved promise an exact parser frontier.
+   */
+  public pause(): Promise<void> {
+    if (this._store.isDisposed) {
+      return Promise.resolve();
+    }
+    this._isPaused = true;
+    this._innerWriteTimer.cancel();
+    if (!this._isParsing) {
+      return Promise.resolve();
+    }
+    this._pausePromise ??= new Promise<void>(resolve => {
+      this._resolvePause = resolve;
+    });
+    return this._pausePromise;
+  }
+
+  /**
+   * Continue parsing from the exact queue position retained by {@link pause}.
+   */
+  public resume(): void {
+    if (this._store.isDisposed || !this._isPaused) {
+      return;
+    }
+    this._isPaused = false;
+    this._settlePause();
+    if (!this._isParsing && this._writeBuffer.length > this._bufferOffset) {
+      this._scheduleInnerWrite();
+    }
+  }
+
+  private _settlePause(): void {
+    this._resolvePause?.();
+    this._resolvePause = undefined;
+    this._pausePromise = undefined;
   }
 
   /**
@@ -69,7 +114,7 @@ export class WriteBuffer extends Disposable {
    * promises to resolve.
    */
   public flushSync(): void {
-    if (this._store.isDisposed) {
+    if (this._store.isDisposed || this._isPaused) {
       return;
     }
     // exit early if another sync write loop is active
@@ -121,6 +166,10 @@ export class WriteBuffer extends Disposable {
     this._writeBuffer.push(data);
     this._callbacks.push(undefined);
 
+    if (this._isPaused) {
+      return;
+    }
+
     // increase recursion counter
     this._syncCalls++;
     // exit early if another writeSync loop is active
@@ -157,10 +206,20 @@ export class WriteBuffer extends Disposable {
       throw new Error('write data discarded, use flow control to avoid losing data');
     }
 
-    // schedule chunk processing for next event loop run
+    // Initialize a new queue even while paused. writeSync leaves the offset at a
+    // sentinel value, so deferring this reset until resume would strand writes
+    // that arrived during the pause.
     if (!this._writeBuffer.length) {
       this._bufferOffset = 0;
 
+      if (this._isPaused) {
+        this._pendingData += data.length;
+        this._writeBuffer.push(data);
+        this._callbacks.push(callback);
+        return;
+      }
+
+      // schedule chunk processing for next event loop run
       // If this is the first write call after the user has done some input,
       // parse it immediately to minimize input latency,
       // otherwise schedule for the next event
@@ -220,9 +279,14 @@ export class WriteBuffer extends Disposable {
     if (this._store.isDisposed) {
       return;
     }
+    if (this._isPaused && !this._isParsing) {
+      this._settlePause();
+      return;
+    }
     const startTime = lastTime || performance.now();
     while (this._writeBuffer.length > this._bufferOffset) {
       const data = this._writeBuffer[this._bufferOffset];
+      this._isParsing = true;
       const result = this._action(data, promiseResult);
       if (result) {
         /**
@@ -291,20 +355,28 @@ export class WriteBuffer extends Disposable {
       if (cb) cb();
       this._bufferOffset++;
       this._pendingData -= data.length;
+      this._isParsing = false;
+
+      if (this._isPaused) {
+        this._settlePause();
+        break;
+      }
 
       if (performance.now() - startTime >= Constants.WRITE_TIMEOUT_MS) {
         break;
       }
     }
     if (this._writeBuffer.length > this._bufferOffset) {
-      // Allow renderer to catch up before processing the next batch
-      // trim already processed chunks if we are above threshold
-      if (this._bufferOffset > Constants.WRITE_BUFFER_LENGTH_THRESHOLD) {
-        this._writeBuffer = this._writeBuffer.slice(this._bufferOffset);
-        this._callbacks = this._callbacks.slice(this._bufferOffset);
-        this._bufferOffset = 0;
+      if (!this._isPaused) {
+        // Allow renderer to catch up before processing the next batch
+        // trim already processed chunks if we are above threshold
+        if (this._bufferOffset > Constants.WRITE_BUFFER_LENGTH_THRESHOLD) {
+          this._writeBuffer = this._writeBuffer.slice(this._bufferOffset);
+          this._callbacks = this._callbacks.slice(this._bufferOffset);
+          this._bufferOffset = 0;
+        }
+        this._scheduleInnerWrite();
       }
-      this._scheduleInnerWrite();
     } else {
       this._writeBuffer.length = 0;
       this._callbacks.length = 0;

@@ -140,6 +140,58 @@ describe('WriteBuffer', () => {
       wb.flushSync();
       assert.equal(parsed, 0);
     });
+    it('pause retains queued and subsequent writes until resume', async () => {
+      wb.write('a', () => { cbStack.push('a'); });
+      await wb.pause();
+      wb.write('b', () => { cbStack.push('b'); });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.deepEqual(stack, []);
+      assert.deepEqual(cbStack, []);
+
+      await new Promise<void>(resolve => {
+        wb.write('c', () => {
+          cbStack.push('c');
+          resolve();
+        });
+        wb.resume();
+      });
+      assert.deepEqual(stack, ['a', 'b', 'c']);
+      assert.deepEqual(cbStack, ['a', 'b', 'c']);
+    });
+    it('pause resolves only after an asynchronous parser chunk completes', async () => {
+      let resolveParser!: (value: boolean) => void;
+      let first = true;
+      wb = new WriteBuffer(data => {
+        stack.push(data);
+        if (first) {
+          first = false;
+          return new Promise<boolean>(resolve => {
+            resolveParser = resolve;
+          });
+        }
+      });
+      wb.write('a', () => { cbStack.push('a'); });
+      wb.write('b', () => { cbStack.push('b'); });
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      let paused = false;
+      const frontier = wb.pause().then(() => {
+        paused = true;
+      });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      assert.equal(paused, false);
+      resolveParser(false);
+      await frontier;
+      assert.deepEqual(stack, ['a', 'a']);
+      assert.deepEqual(cbStack, ['a']);
+
+      await new Promise<void>(resolve => {
+        wb.write('c', resolve);
+        wb.resume();
+      });
+      assert.deepEqual(stack, ['a', 'a', 'b', 'c']);
+      assert.deepEqual(cbStack, ['a', 'b']);
+    });
     it('dispose cancels scheduled innerWrite', done => {
       wb.write('a');
       wb.dispose();

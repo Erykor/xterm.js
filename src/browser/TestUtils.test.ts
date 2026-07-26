@@ -96,6 +96,15 @@ export class MockTerminal implements ITerminal {
   public attachCustomWheelEventHandler(customWheelEventHandler: (event: WheelEvent) => boolean): void {
     throw new Error('Method not implemented.');
   }
+  public attachCustomViewportScrollHandler(customViewportScrollHandler: (amount: number) => void | Promise<void>): void {
+    throw new Error('Method not implemented.');
+  }
+  public pauseWrites(): Promise<void> {
+    throw new Error('Method not implemented.');
+  }
+  public resumeWrites(): void {
+    throw new Error('Method not implemented.');
+  }
   public registerCsiHandler(id: IFunctionIdentifier, callback: (params: IParams) => boolean | Promise<boolean>): IDisposable {
     throw new Error('Method not implemented.');
   }

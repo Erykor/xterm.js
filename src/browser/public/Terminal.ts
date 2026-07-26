@@ -157,6 +157,9 @@ export class Terminal extends Disposable implements ITerminalApi {
   public attachCustomWheelEventHandler(customWheelEventHandler: (event: WheelEvent) => boolean): void {
     this._core.attachCustomWheelEventHandler(customWheelEventHandler);
   }
+  public attachCustomViewportScrollHandler(customViewportScrollHandler: (amount: number) => void | Promise<void>): void {
+    this._core.attachCustomViewportScrollHandler(customViewportScrollHandler);
+  }
   public registerLinkProvider(linkProvider: ILinkProvider): IDisposable {
     return this._core.registerLinkProvider(linkProvider);
   }
@@ -223,6 +226,12 @@ export class Terminal extends Disposable implements ITerminalApi {
   }
   public write(data: string | Uint8Array, callback?: () => void): void {
     this._core.write(data, callback);
+  }
+  public pauseWrites(): Promise<void> {
+    return this._core.pauseWrites();
+  }
+  public resumeWrites(): void {
+    this._core.resumeWrites();
   }
   public writeln(data: string | Uint8Array, callback?: () => void): void {
     this._core.write(data);
