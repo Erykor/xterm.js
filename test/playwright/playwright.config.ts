@@ -1,5 +1,7 @@
 import { PlaywrightTestConfig } from '@playwright/test';
 
+const port = parseInt(process.env.PORT ?? '3000');
+
 const config: PlaywrightTestConfig = {
   testDir: '.',
   timeout: 10000,
@@ -26,7 +28,7 @@ const config: PlaywrightTestConfig = {
   reporter: 'list',
   webServer: {
     command: 'npm start',
-    port: 3000,
+    port,
     timeout: 120000,
     reuseExistingServer: !process.env.CI
   }

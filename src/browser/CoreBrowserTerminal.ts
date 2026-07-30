@@ -104,10 +104,13 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
   private _keyDownHandled: boolean = false;
 
   /**
-   * Records whether a keydown event has occurred since the last keyup event, i.e. whether a key
-   * is currently "pressed".
+   * Records whether a non-modifier keydown can account for the current text input transaction.
+   * This suppresses the duplicate input event which follows an ordinary keydown. It is deliberately
+   * not a physical "key is down" flag: WebKit can deliver IME text before keydown and can omit or
+   * mismatch keyup, so retaining this until keyup can swallow later committed text.
    */
   private _keyDownSeen: boolean = false;
+  private _keyDownSeenGeneration: number = 0;
 
   /**
    * Records whether the keypress event has already been handled and triggered a data event, if so
@@ -937,7 +940,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
    */
   protected _keyDown(event: KeyboardEvent): boolean | undefined {
     this._keyDownHandled = false;
-    this._keyDownSeen = true;
+    this._setKeyDownSeen(!wasModifierKeyOnlyEvent(event));
 
     if (this._customKeyEventHandler && this._customKeyEventHandler(event) === false) {
       return false;
@@ -1041,7 +1044,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
   }
 
   protected _keyUp(ev: KeyboardEvent): void {
-    this._keyDownSeen = false;
+    this._setKeyDownSeen(false);
 
     if (this._customKeyEventHandler && this._customKeyEventHandler(ev) === false) {
       return;
@@ -1060,6 +1063,27 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
 
     this.updateCursorStyle(ev);
     this._keyPressHandled = false;
+  }
+
+  /**
+   * Limit keydown duplicate suppression to the native input transaction. The second timer turn is
+   * intentional: CompositionHelper uses a zero-delay timer to observe textarea mutations after a
+   * keydown-229 event. Keeping the flag through that turn prevents a delayed input event and the
+   * textarea diff from both emitting the same text.
+   */
+  private _setKeyDownSeen(seen: boolean): void {
+    const generation = ++this._keyDownSeenGeneration;
+    this._keyDownSeen = seen;
+    if (!seen) {
+      return;
+    }
+    this._coreBrowserService?.window.setTimeout(() => {
+      this._coreBrowserService?.window.setTimeout(() => {
+        if (generation === this._keyDownSeenGeneration) {
+          this._keyDownSeen = false;
+        }
+      }, 0);
+    }, 0);
   }
 
   /**

@@ -429,6 +429,114 @@ test.describe('API Integration Tests', () => {
       deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['f', 'o', 'o']);
     });
 
+    test('onData handles WebKit IME input before keydown after Shift', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        const shift = new KeyboardEvent('keydown', {
+          key: 'Shift',
+          code: 'ShiftLeft',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(shift, 'keyCode', { value: 16 });
+        textarea.dispatchEvent(shift);
+
+        textarea.value = '？';
+        textarea.setSelectionRange(1, 1);
+        textarea.dispatchEvent(new InputEvent('input', {
+          data: '？',
+          inputType: 'insertText',
+          bubbles: true,
+          composed: true
+        }));
+
+        const process = new KeyboardEvent('keydown', {
+          key: 'Process',
+          code: 'Slash',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(process, 'keyCode', { value: 229 });
+        textarea.dispatchEvent(process);
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['？']);
+    });
+
+    test('onData expires a keydown-229 without keyup before later IME text', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        const abandonedProcess = new KeyboardEvent('keydown', {
+          key: 'Process',
+          code: 'Comma',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(abandonedProcess, 'keyCode', { value: 229 });
+        textarea.dispatchEvent(abandonedProcess);
+      `);
+      await timeout(20);
+      await ctx.page.evaluate(`
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        textarea.value = '，';
+        textarea.setSelectionRange(1, 1);
+        textarea.dispatchEvent(new InputEvent('input', {
+          data: '，',
+          inputType: 'insertText',
+          bubbles: true,
+          composed: true
+        }));
+        const process = new KeyboardEvent('keydown', {
+          key: 'Process',
+          code: 'Comma',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(process, 'keyCode', { value: 229 });
+        textarea.dispatchEvent(process);
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['，']);
+    });
+
+    test('onData handles keydown before IME input without deleting retained text', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        textarea.value = '你';
+        textarea.setSelectionRange(1, 1);
+        const process = new KeyboardEvent('keydown', {
+          key: 'Process',
+          code: 'Digit1',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(process, 'keyCode', { value: 229 });
+        textarea.dispatchEvent(process);
+        textarea.value = '你！';
+        textarea.setSelectionRange(2, 2);
+        textarea.dispatchEvent(new InputEvent('input', {
+          data: '！',
+          inputType: 'insertText',
+          bubbles: true,
+          composed: true
+        }));
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['！']);
+    });
+
     test('onKey', async () => {
       await openTerminal(ctx);
       await ctx.page.evaluate(`
