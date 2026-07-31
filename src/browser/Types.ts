@@ -44,6 +44,7 @@ export interface ICompositionHelper {
   compositionstart(): void;
   compositionupdate(ev: CompositionEvent): void;
   compositionend(): void;
+  handleInputEvent(ev: Pick<InputEvent, 'data' | 'inputType'>, wasAlreadySent: boolean): boolean;
   updateCompositionElements(dontRecurse?: boolean): void;
   keydown(ev: KeyboardEvent): boolean;
 }

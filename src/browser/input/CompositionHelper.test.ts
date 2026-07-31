@@ -46,6 +46,37 @@ describe('CompositionHelper', () => {
   });
 
   describe('Input', () => {
+    it('Should emit a composition only once when Tab finalizes it before compositionend', (done) => {
+      compositionHelper.compositionstart();
+      compositionHelper.compositionupdate({ data: 'hh' });
+      textarea.value = 'hh';
+      setTimeout(() => {
+        assert.isTrue(compositionHelper.keydown({ keyCode: 9 } as KeyboardEvent));
+        assert.equal(handledText, 'hh');
+        // macOS still delivers the native compositionend after the Tab
+        // keydown forced the synchronous commit.
+        compositionHelper.compositionend();
+        setTimeout(() => {
+          assert.equal(handledText, 'hh');
+          done();
+        }, 0);
+      }, 0);
+    });
+
+    it('Should prefer committed input over a pending keydown-229 textarea diff', (done) => {
+      assert.isFalse(compositionHelper.keydown({ keyCode: 229 } as KeyboardEvent));
+      textarea.value = '，';
+      assert.isTrue(compositionHelper.handleInputEvent({
+        data: '，',
+        inputType: 'insertText'
+      }, false));
+      setTimeout(() => {
+        assert.equal(handledText, '，');
+        assert.equal(textarea.value, '');
+        done();
+      }, 0);
+    });
+
     it('Should insert simple characters', (done) => {
       // First character 'ㅇ'
       compositionHelper.compositionstart();

@@ -537,6 +537,234 @@ test.describe('API Integration Tests', () => {
       deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['！']);
     });
 
+    test('onData emits macOS Chinese IME ASCII only once when Tab commits it', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        textarea.value = '';
+        textarea.setSelectionRange(0, 0);
+        textarea.dispatchEvent(new CompositionEvent('compositionstart', {
+          data: '',
+          bubbles: true
+        }));
+        textarea.value = 'hh';
+        textarea.setSelectionRange(2, 2);
+        textarea.dispatchEvent(new CompositionEvent('compositionupdate', {
+          data: 'hh',
+          bubbles: true
+        }));
+      `);
+      await timeout(0);
+      await ctx.page.evaluate(`
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        const tab = new KeyboardEvent('keydown', {
+          key: 'Tab',
+          code: 'Tab',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(tab, 'keyCode', { value: 9 });
+        textarea.dispatchEvent(tab);
+        textarea.dispatchEvent(new CompositionEvent('compositionend', {
+          data: 'hh',
+          bubbles: true
+        }));
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['hh', '\t']);
+    });
+
+    test('onData does not let a preceding keydown swallow a rapid IME commit', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        const ascii = new KeyboardEvent('keydown', {
+          key: 'a',
+          code: 'KeyA',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(ascii, 'keyCode', { value: 65 });
+        textarea.dispatchEvent(ascii);
+
+        textarea.value = '，';
+        textarea.setSelectionRange(1, 1);
+        textarea.dispatchEvent(new InputEvent('input', {
+          data: '，',
+          inputType: 'insertText',
+          bubbles: true,
+          composed: true
+        }));
+        const process = new KeyboardEvent('keydown', {
+          key: 'Process',
+          code: 'Comma',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(process, 'keyCode', { value: 229 });
+        textarea.dispatchEvent(process);
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['a', '，']);
+    });
+
+    test('onData suppresses only the exact input echo of a physical key', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        const ascii = new KeyboardEvent('keydown', {
+          key: 'a',
+          code: 'KeyA',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(ascii, 'keyCode', { value: 65 });
+        textarea.dispatchEvent(ascii);
+        textarea.value = 'a';
+        textarea.setSelectionRange(1, 1);
+        textarea.dispatchEvent(new InputEvent('input', {
+          data: 'a',
+          inputType: 'insertText',
+          bubbles: true,
+          composed: true
+        }));
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['a']);
+    });
+
+    test('onData treats insertText as a commit when compositionend is missing', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        textarea.value = '';
+        textarea.setSelectionRange(0, 0);
+        textarea.dispatchEvent(new CompositionEvent('compositionstart', {
+          data: '',
+          bubbles: true
+        }));
+        textarea.value = '你';
+        textarea.setSelectionRange(1, 1);
+        textarea.dispatchEvent(new CompositionEvent('compositionupdate', {
+          data: '你',
+          bubbles: true
+        }));
+        textarea.dispatchEvent(new InputEvent('input', {
+          data: '你',
+          inputType: 'insertText',
+          bubbles: true,
+          composed: true
+        }));
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['你']);
+      strictEqual(
+        await ctx.page.evaluate(`
+          document.querySelector('.composition-view').classList.contains('active')
+        `),
+        false
+      );
+      strictEqual(
+        await ctx.page.evaluate(`document.querySelector('.xterm-helper-textarea').value`),
+        ''
+      );
+    });
+
+    test('onData prefers final input when compositionend arrives first', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        textarea.value = '';
+        textarea.setSelectionRange(0, 0);
+        textarea.dispatchEvent(new CompositionEvent('compositionstart', {
+          data: '',
+          bubbles: true
+        }));
+        textarea.value = 'ni';
+        textarea.setSelectionRange(2, 2);
+        textarea.dispatchEvent(new CompositionEvent('compositionupdate', {
+          data: 'ni',
+          bubbles: true
+        }));
+      `);
+      await timeout(0);
+      await ctx.page.evaluate(`
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        textarea.dispatchEvent(new CompositionEvent('compositionend', {
+          data: '你',
+          bubbles: true
+        }));
+        textarea.value = '你';
+        textarea.setSelectionRange(1, 1);
+        textarea.dispatchEvent(new InputEvent('input', {
+          data: '你',
+          inputType: 'insertText',
+          bubbles: true,
+          composed: true
+        }));
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['你']);
+    });
+
+    test('onData does not let a keypress fallback swallow a later IME commit', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        const keydown = new KeyboardEvent('keydown', {
+          key: 'A',
+          code: 'KeyA',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(keydown, 'keyCode', { value: 65 });
+        textarea.dispatchEvent(keydown);
+        const keypress = new KeyboardEvent('keypress', {
+          key: 'A',
+          code: 'KeyA',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperties(keypress, {
+          keyCode: { value: 65 },
+          charCode: { value: 65 },
+          which: { value: 65 }
+        });
+        textarea.dispatchEvent(keypress);
+
+        textarea.value = '，';
+        textarea.setSelectionRange(1, 1);
+        textarea.dispatchEvent(new InputEvent('input', {
+          data: '，',
+          inputType: 'insertText',
+          bubbles: true,
+          composed: true
+        }));
+        const process = new KeyboardEvent('keydown', {
+          key: 'Process',
+          code: 'Comma',
+          bubbles: true,
+          cancelable: true
+        });
+        Object.defineProperty(process, 'keyCode', { value: 229 });
+        textarea.dispatchEvent(process);
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['A', '，']);
+    });
+
     test('onKey', async () => {
       await openTerminal(ctx);
       await ctx.page.evaluate(`

@@ -104,20 +104,13 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
   private _keyDownHandled: boolean = false;
 
   /**
-   * Records whether a non-modifier keydown can account for the current text input transaction.
-   * This suppresses the duplicate input event which follows an ordinary keydown. It is deliberately
-   * not a physical "key is down" flag: WebKit can deliver IME text before keydown and can omit or
-   * mismatch keyup, so retaining this until keyup can swallow later committed text.
+   * Exact text already emitted by the current physical key transaction. Some browsers follow a
+   * handled keydown/keypress with an input event containing the same data. Matching the text,
+   * rather than remembering merely that some key was pressed, prevents an unrelated fast IME
+   * commit from being swallowed when keyup is delayed or omitted.
    */
-  private _keyDownSeen: boolean = false;
-  private _keyDownSeenGeneration: number = 0;
-
-  /**
-   * Records whether the keypress event has already been handled and triggered a data event, if so
-   * the input event should not trigger a data event but should still print to the textarea so
-   * screen readers will announce it.
-   */
-  private _keyPressHandled: boolean = false;
+  private _pendingTextInputEcho: string | undefined;
+  private _pendingTextInputEchoGeneration: number = 0;
 
   /**
    * Records whether there has been a keydown event for a dead key without a corresponding keydown
@@ -422,6 +415,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     this._register(addDisposableListener(this.textarea!, 'keydown', (ev: KeyboardEvent) => this._keyDown(ev), true));
     this._register(addDisposableListener(this.textarea!, 'keypress', (ev: KeyboardEvent) => this._keyPress(ev), true));
     this._register(addDisposableListener(this.textarea!, 'compositionstart', () => {
+      this._setPendingTextInputEcho(undefined);
       // Ensure the textarea is synced to the latest cursor location before composition begins. This
       // is to workaround a problem where highly dynamic TUIs like agentic CLIs reprint agressively
       // would cause the IME to appear in the wrong position. The theory is that when the IME is
@@ -940,7 +934,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
    */
   protected _keyDown(event: KeyboardEvent): boolean | undefined {
     this._keyDownHandled = false;
-    this._setKeyDownSeen(!wasModifierKeyOnlyEvent(event));
+    this._setPendingTextInputEcho(undefined);
 
     if (this._customKeyEventHandler && this._customKeyEventHandler(event) === false) {
       return false;
@@ -1014,6 +1008,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     const wasModifierOnly = this._keyboardService.useWin32InputMode && wasModifierKeyOnlyEvent(event);
     this._onKey.fire({ key: result.key, domEvent: event });
     this._showCursor();
+    this._setPendingTextInputEcho(result.key);
     this.coreService.triggerDataEvent(result.key, !wasModifierOnly);
 
     // Cancel events when not in screen reader mode so events don't get bubbled up and handled by
@@ -1044,7 +1039,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
   }
 
   protected _keyUp(ev: KeyboardEvent): void {
-    this._setKeyDownSeen(false);
+    this._setPendingTextInputEcho(undefined);
 
     if (this._customKeyEventHandler && this._customKeyEventHandler(ev) === false) {
       return;
@@ -1062,28 +1057,29 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     }
 
     this.updateCursorStyle(ev);
-    this._keyPressHandled = false;
   }
 
   /**
-   * Limit keydown duplicate suppression to the native input transaction. The second timer turn is
-   * intentional: CompositionHelper uses a zero-delay timer to observe textarea mutations after a
-   * keydown-229 event. Keeping the flag through that turn prevents a delayed input event and the
-   * textarea diff from both emitting the same text.
+   * Keep an exact physical-key echo only through the current native input transaction. A later
+   * different input is always authoritative, even if WebKit omitted the corresponding keyup.
    */
-  private _setKeyDownSeen(seen: boolean): void {
-    const generation = ++this._keyDownSeenGeneration;
-    this._keyDownSeen = seen;
-    if (!seen) {
+  private _setPendingTextInputEcho(data: string | undefined): void {
+    const generation = ++this._pendingTextInputEchoGeneration;
+    this._pendingTextInputEcho = data;
+    if (data === undefined) {
       return;
     }
     this._coreBrowserService?.window.setTimeout(() => {
-      this._coreBrowserService?.window.setTimeout(() => {
-        if (generation === this._keyDownSeenGeneration) {
-          this._keyDownSeen = false;
-        }
-      }, 0);
+      if (generation === this._pendingTextInputEchoGeneration) {
+        this._pendingTextInputEcho = undefined;
+      }
     }, 0);
+  }
+
+  private _consumePendingTextInputEcho(data: string): boolean {
+    const matched = this._pendingTextInputEcho === data;
+    this._setPendingTextInputEcho(undefined);
+    return matched;
   }
 
   /**
@@ -1094,8 +1090,6 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
    */
   protected _keyPress(ev: KeyboardEvent): boolean {
     let key;
-
-    this._keyPressHandled = false;
 
     if (this._keyDownHandled) {
       return false;
@@ -1125,9 +1119,8 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
 
     this._onKey.fire({ key, domEvent: ev });
     this._showCursor();
+    this._setPendingTextInputEcho(key);
     this.coreService.triggerDataEvent(key, true);
-
-    this._keyPressHandled = true;
 
     // The key was handled so clear the dead key state, otherwise certain keystrokes like arrow
     // keys could be ignored
@@ -1143,21 +1136,17 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
    * @param ev The input event to be handled.
    */
   protected _inputEvent(ev: InputEvent): boolean {
-    // Only support emoji IMEs when screen reader mode is disabled as the event must bubble up to
-    // support reading out character input which can doubling up input characters
-    // Based on these event traces: https://github.com/xtermjs/xterm.js/issues/3679
-    if (ev.data && ev.inputType === 'insertText' && (!ev.composed || !this._keyDownSeen) && !this.optionsService.rawOptions.screenReaderMode) {
-      if (this._keyPressHandled) {
-        return false;
-      }
-
+    // `input` is the authoritative committed-text signal across IMEs. CompositionHelper arbitrates
+    // it with compositionend and keydown-229 fallbacks; the exact echo check only removes a copy
+    // already emitted by this same physical key transaction.
+    if (ev.data && ev.inputType === 'insertText' && !this.optionsService.rawOptions.screenReaderMode) {
       // The key was handled so clear the dead key state, otherwise certain keystrokes like arrow
       // keys could be ignored
       this._unprocessedDeadKey = false;
-
-      const text = ev.data;
-      this.coreService.triggerDataEvent(text, true);
-      return true;
+      return this._compositionHelper!.handleInputEvent(
+        ev,
+        this._consumePendingTextInputEcho(ev.data)
+      );
     }
 
     return false;

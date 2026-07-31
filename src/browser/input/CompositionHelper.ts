@@ -50,7 +50,19 @@ export class CompositionHelper {
   /**
    * The pending textarea change timer, if any.
    */
-  private _textareaChangeTimer?: number;
+  private _textareaChangeTimer?: ReturnType<typeof setTimeout>;
+
+  /**
+   * The pending idle textarea cleanup timer, if any. Textarea reads and cleanup are owned by this
+   * class so a host cannot clear a value while a composition or keydown-229 diff still needs it.
+   */
+  private _textareaCleanupTimer?: ReturnType<typeof setTimeout>;
+
+  /**
+   * Composition text that was synchronously emitted because another key (for example Tab or Enter)
+   * ended the composition before the native compositionend/input events arrived.
+   */
+  private _pendingCompositionInputEcho: string;
 
   constructor(
     private readonly _textarea: HTMLTextAreaElement,
@@ -65,13 +77,16 @@ export class CompositionHelper {
     this._compositionPosition = { start: 0, end: 0 };
     this._compositionSuffix = '';
     this._dataAlreadySent = '';
+    this._pendingCompositionInputEcho = '';
   }
 
   /**
    * Handles the compositionstart event, activating the composition view.
    */
   public compositionstart(): void {
+    this._cancelTextareaCleanup();
     this._isComposing = true;
+    this._pendingCompositionInputEcho = '';
     // It's important to use the selection here instead of textarea length to avoid conflicts with
     // screen reader mode
     const start = this._textarea.selectionStart ?? this._textarea.value.length;
@@ -104,7 +119,61 @@ export class CompositionHelper {
    * the handler.
    */
   public compositionend(): void {
+    // A non-composition keydown can synchronously finalize the composition so its data reaches the
+    // PTY before that key. WebKit still emits the native compositionend afterwards; treating it as
+    // a second finalization duplicates the entire preedit (notably ASCII followed by Tab).
+    if (!this._isComposing) {
+      this._scheduleTextareaCleanup();
+      return;
+    }
     this._finalizeComposition(true);
+  }
+
+  /**
+   * Handles a committed native input event. `input` is the only commit signal consistently emitted
+   * by the major IME implementations, so it wins over both the compositionend reader and the
+   * keydown-229 textarea diff. Those paths remain fallbacks when no input event arrives.
+   *
+   * @param ev The committed input event.
+   * @param wasAlreadySent Whether the same text was emitted by a physical keydown/keypress.
+   * @returns Whether the event was a committed text input handled by this helper.
+   */
+  public handleInputEvent(
+    ev: Pick<InputEvent, 'data' | 'inputType'>,
+    wasAlreadySent: boolean
+  ): boolean {
+    if (!ev.data || ev.inputType !== 'insertText' || this._optionsService.rawOptions.screenReaderMode) {
+      return false;
+    }
+
+    // An authoritative input event supersedes both asynchronous fallback readers. Merely letting
+    // them observe the same textarea later would duplicate the input (or turn cleanup into DEL).
+    if (this._textareaChangeTimer !== undefined) {
+      clearTimeout(this._textareaChangeTimer);
+      this._textareaChangeTimer = undefined;
+    }
+    this._isSendingComposition = false;
+    if (this._isComposing) {
+      this._isComposing = false;
+      this._compositionView.classList.remove('active');
+    }
+
+    let input = ev.data;
+    if (this._pendingCompositionInputEcho) {
+      if (input === this._pendingCompositionInputEcho) {
+        input = '';
+      } else if (input.startsWith(this._pendingCompositionInputEcho)) {
+        // Some engines report the committed composition and the immediately following text in one
+        // input event. Only the suffix has not already been sent.
+        input = input.substring(this._pendingCompositionInputEcho.length);
+      }
+      this._pendingCompositionInputEcho = '';
+    }
+    if (!wasAlreadySent && input.length > 0) {
+      this._coreService.triggerDataEvent(input, true);
+    }
+    this._scheduleTextareaCleanup();
+    return true;
   }
 
   /**
@@ -113,6 +182,13 @@ export class CompositionHelper {
    * @returns Whether the Terminal should continue processing the keydown event.
    */
   public keydown(ev: KeyboardEvent): boolean {
+    this._cancelTextareaCleanup();
+    if (!this._isComposing && !this._isSendingComposition) {
+      // This is a strict transaction boundary. Clear settled residue before the new key can ask
+      // _handleAnyTextareaChanges to snapshot the textarea.
+      this._pendingCompositionInputEcho = '';
+      this._clearTextarea();
+    }
     if (this._isComposing || this._isSendingComposition) {
       if (ev.keyCode === 20 || ev.keyCode === 229) {
         // 20 is CapsLock, 229 is Enter
@@ -154,7 +230,11 @@ export class CompositionHelper {
       // Cancel any delayed composition send requests and send the input immediately.
       this._isSendingComposition = false;
       const input = this._textarea.value.substring(this._compositionPosition.start, this._compositionPosition.end);
-      this._coreService.triggerDataEvent(input, true);
+      if (input.length > 0) {
+        this._pendingCompositionInputEcho = input;
+        this._coreService.triggerDataEvent(input, true);
+      }
+      this._scheduleTextareaCleanup();
     } else {
       // Make a deep copy of the composition position here as a new compositionstart event may
       // fire before the setTimeout executes.
@@ -196,8 +276,10 @@ export class CompositionHelper {
             input = value.substring(currentCompositionPosition.start, Math.max(currentCompositionPosition.start, valueEnd));
           }
           if (input.length > 0) {
+            this._pendingCompositionInputEcho = input;
             this._coreService.triggerDataEvent(input, true);
           }
+          this._scheduleTextareaCleanup();
         }
       }, 0);
     }
@@ -210,11 +292,12 @@ export class CompositionHelper {
    * IME is active.
    */
   private _handleAnyTextareaChanges(): void {
-    if (this._textareaChangeTimer) {
+    if (this._textareaChangeTimer !== undefined) {
       return;
     }
+    this._cancelTextareaCleanup();
     const oldValue = this._textarea.value;
-    this._textareaChangeTimer = window.setTimeout(() => {
+    this._textareaChangeTimer = setTimeout(() => {
       this._textareaChangeTimer = undefined;
       // Ignore if a composition has started since the timeout
       if (!this._isComposing) {
@@ -225,15 +308,45 @@ export class CompositionHelper {
         this._dataAlreadySent = diff;
 
         if (newValue.length > oldValue.length) {
+          this._pendingCompositionInputEcho = diff;
           this._coreService.triggerDataEvent(diff, true);
         } else if (newValue.length < oldValue.length) {
           this._coreService.triggerDataEvent(`${C0.DEL}`, true);
         } else if ((newValue.length === oldValue.length) && (newValue !== oldValue)) {
+          this._pendingCompositionInputEcho = newValue;
           this._coreService.triggerDataEvent(newValue, true);
         }
 
       }
+      this._scheduleTextareaCleanup();
     }, 0);
+  }
+
+  private _cancelTextareaCleanup(): void {
+    if (this._textareaCleanupTimer !== undefined) {
+      clearTimeout(this._textareaCleanupTimer);
+      this._textareaCleanupTimer = undefined;
+    }
+  }
+
+  private _scheduleTextareaCleanup(): void {
+    if (this._optionsService.rawOptions.screenReaderMode) {
+      return;
+    }
+    this._cancelTextareaCleanup();
+    this._textareaCleanupTimer = setTimeout(() => {
+      this._textareaCleanupTimer = undefined;
+      if (!this._isComposing && !this._isSendingComposition && this._textareaChangeTimer === undefined) {
+        this._clearTextarea();
+        this._pendingCompositionInputEcho = '';
+      }
+    }, 0);
+  }
+
+  private _clearTextarea(): void {
+    if (!this._optionsService.rawOptions.screenReaderMode && this._textarea.value) {
+      this._textarea.value = '';
+    }
   }
 
   /**
