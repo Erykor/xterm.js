@@ -77,6 +77,22 @@ describe('CompositionHelper', () => {
       }, 0);
     });
 
+    it('Should treat insertFromComposition as authoritative without compositionend', (done) => {
+      compositionHelper.compositionstart();
+      compositionHelper.compositionupdate({ data: '你' });
+      textarea.value = '你';
+      assert.isTrue(compositionHelper.handleInputEvent({
+        data: '你',
+        inputType: 'insertFromComposition'
+      }, false));
+      setTimeout(() => {
+        assert.equal(handledText, '你');
+        assert.isFalse(compositionHelper.isComposing);
+        assert.equal(textarea.value, '');
+        done();
+      }, 0);
+    });
+
     it('Should insert simple characters', (done) => {
       // First character 'ㅇ'
       compositionHelper.compositionstart();

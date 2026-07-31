@@ -678,6 +678,51 @@ test.describe('API Integration Tests', () => {
       );
     });
 
+    test('onData treats insertFromComposition as a commit when compositionend is missing', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        textarea.value = '';
+        textarea.setSelectionRange(0, 0);
+        textarea.dispatchEvent(new CompositionEvent('compositionstart', {
+          data: '',
+          bubbles: true
+        }));
+        textarea.value = '你';
+        textarea.setSelectionRange(1, 1);
+        textarea.dispatchEvent(new CompositionEvent('compositionupdate', {
+          data: '你',
+          bubbles: true
+        }));
+        const commit = new InputEvent('input', {
+          data: '你',
+          inputType: 'insertFromComposition',
+          bubbles: true,
+          composed: true
+        });
+        // Chromium normalizes this WebKit-supported inputType on synthetic
+        // events, so preserve the wire value while exercising the shared path.
+        if (commit.inputType !== 'insertFromComposition') {
+          Object.defineProperty(commit, 'inputType', { value: 'insertFromComposition' });
+        }
+        textarea.dispatchEvent(commit);
+      `);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['你']);
+      strictEqual(
+        await ctx.page.evaluate(`
+          document.querySelector('.composition-view').classList.contains('active')
+        `),
+        false
+      );
+      strictEqual(
+        await ctx.page.evaluate(`document.querySelector('.xterm-helper-textarea').value`),
+        ''
+      );
+    });
+
     test('onData prefers final input when compositionend arrives first', async () => {
       await openTerminal(ctx);
       await ctx.page.evaluate(`

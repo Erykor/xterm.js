@@ -29,7 +29,7 @@ import { CharacterJoinerHandler, CustomKeyEventHandler, CustomSelectionHandler, 
 import { Viewport } from './Viewport';
 import { BufferDecorationRenderer } from './decorations/BufferDecorationRenderer';
 import { OverviewRulerRenderer } from './decorations/OverviewRulerRenderer';
-import { CompositionHelper } from './input/CompositionHelper';
+import { CompositionHelper, isCommittedTextInputEvent } from './input/CompositionHelper';
 import { DomRenderer } from './renderer/dom/DomRenderer';
 import { IRenderer } from './renderer/shared/Types';
 import { CharSizeService } from './services/CharSizeService';
@@ -1139,7 +1139,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     // `input` is the authoritative committed-text signal across IMEs. CompositionHelper arbitrates
     // it with compositionend and keydown-229 fallbacks; the exact echo check only removes a copy
     // already emitted by this same physical key transaction.
-    if (ev.data && ev.inputType === 'insertText' && !this.optionsService.rawOptions.screenReaderMode) {
+    if (isCommittedTextInputEvent(ev) && !this.optionsService.rawOptions.screenReaderMode) {
       // The key was handled so clear the dead key state, otherwise certain keystrokes like arrow
       // keys could be ignored
       this._unprocessedDeadKey = false;

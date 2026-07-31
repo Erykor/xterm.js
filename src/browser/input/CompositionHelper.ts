@@ -12,6 +12,17 @@ interface IPosition {
   end: number;
 }
 
+type CommittedTextInputEvent = Pick<InputEvent, 'data' | 'inputType'> & {
+  data: string;
+  inputType: 'insertText' | 'insertFromComposition';
+};
+
+export function isCommittedTextInputEvent(
+  ev: Pick<InputEvent, 'data' | 'inputType'>
+): ev is CommittedTextInputEvent {
+  return !!ev.data && (ev.inputType === 'insertText' || ev.inputType === 'insertFromComposition');
+}
+
 /**
  * Encapsulates the logic for handling compositionstart, compositionupdate and compositionend
  * events, displaying the in-progress composition to the UI and forwarding the final composition
@@ -142,7 +153,7 @@ export class CompositionHelper {
     ev: Pick<InputEvent, 'data' | 'inputType'>,
     wasAlreadySent: boolean
   ): boolean {
-    if (!ev.data || ev.inputType !== 'insertText' || this._optionsService.rawOptions.screenReaderMode) {
+    if (!isCommittedTextInputEvent(ev) || this._optionsService.rawOptions.screenReaderMode) {
       return false;
     }
 
