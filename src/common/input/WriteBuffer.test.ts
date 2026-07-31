@@ -192,6 +192,47 @@ describe('WriteBuffer', () => {
       assert.deepEqual(stack, ['a', 'a', 'b', 'c']);
       assert.deepEqual(cbStack, ['a', 'b']);
     });
+    it('pause preserves a scheduled asynchronous parser continuation', async () => {
+      let resolveParser!: (value: boolean) => void;
+      let first = true;
+      wb = new WriteBuffer(data => {
+        stack.push(data);
+        if (first) {
+          first = false;
+          return new Promise<boolean>(resolve => {
+            resolveParser = resolve;
+          });
+        }
+      });
+      wb.write('a', () => { cbStack.push('a'); });
+      wb.write('b', () => { cbStack.push('b'); });
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      // Resolving after the write slice budget schedules the continuation on
+      // a timer. Pause in the intervening microtask: it must not cancel that
+      // active-chunk continuation or its frontier would never be reached.
+      resolveParser(false);
+      await Promise.resolve();
+      const frontier = wb.pause();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        frontier.then(() => 'paused'),
+        new Promise<string>(resolve => {
+          timeout = setTimeout(() => resolve('timed out'), 1000);
+        }),
+      ]);
+      clearTimeout(timeout);
+      assert.equal(result, 'paused');
+      assert.deepEqual(stack, ['a', 'a']);
+      assert.deepEqual(cbStack, ['a']);
+
+      await new Promise<void>(resolve => {
+        wb.write('c', resolve);
+        wb.resume();
+      });
+      assert.deepEqual(stack, ['a', 'a', 'b', 'c']);
+      assert.deepEqual(cbStack, ['a', 'b']);
+    });
     it('dispose cancels scheduled innerWrite', done => {
       wb.write('a');
       wb.dispose();

@@ -75,14 +75,19 @@ export class WriteBuffer extends Disposable {
       return Promise.resolve();
     }
     this._isPaused = true;
-    this._innerWriteTimer.cancel();
-    if (!this._isParsing) {
-      return Promise.resolve();
+    if (this._isParsing) {
+      // An asynchronous parser handler may already have scheduled the timer
+      // that resumes its current chunk. That continuation belongs to the
+      // active parse and must reach the frontier before pause can resolve.
+      this._pausePromise ??= new Promise<void>(resolve => {
+        this._resolvePause = resolve;
+      });
+      return this._pausePromise;
     }
-    this._pausePromise ??= new Promise<void>(resolve => {
-      this._resolvePause = resolve;
-    });
-    return this._pausePromise;
+    // With no active chunk, a scheduled timer can only begin future queued
+    // work. Cancel it so the queue remains parked until resume.
+    this._innerWriteTimer.cancel();
+    return Promise.resolve();
   }
 
   /**
