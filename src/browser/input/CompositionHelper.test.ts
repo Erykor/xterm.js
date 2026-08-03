@@ -13,6 +13,9 @@ describe('CompositionHelper', () => {
   let compositionView: HTMLElement;
   let textarea: HTMLTextAreaElement;
   let handledText: string;
+  let compositionViewWidth: number;
+  let bufferService: MockBufferService;
+  let renderService: MockRenderService;
 
   beforeEach(() => {
     compositionView = {
@@ -21,7 +24,8 @@ describe('CompositionHelper', () => {
         remove: () => {}
       },
       getBoundingClientRect: () => {
-        return { width: 0 };
+        const maxWidth = Number.parseFloat(compositionView.style.maxWidth) || Number.POSITIVE_INFINITY;
+        return { width: Math.min(compositionViewWidth, maxWidth), height: 20 };
       },
       style: {
         left: 0,
@@ -29,6 +33,7 @@ describe('CompositionHelper', () => {
       },
       textContent: ''
     } as any;
+    compositionViewWidth = 0;
     textarea = {
       value: '',
       style: {
@@ -41,8 +46,60 @@ describe('CompositionHelper', () => {
       handledText += text;
     };
     handledText = '';
-    const bufferService = new MockBufferService(10, 5);
-    compositionHelper = new CompositionHelper(textarea, compositionView, bufferService, new MockOptionsService(), coreService, new MockRenderService());
+    bufferService = new MockBufferService(10, 5);
+    renderService = new MockRenderService();
+    renderService.dimensions.css.cell.width = 10;
+    renderService.dimensions.css.cell.height = 20;
+    compositionHelper = new CompositionHelper(textarea, compositionView, bufferService, new MockOptionsService(), coreService, renderService);
+  });
+
+  describe('Layout', () => {
+    it('Should shift a preedit left instead of clipping it at the right edge', () => {
+      bufferService.buffer.x = 9;
+      bufferService.buffer.y = 2;
+      compositionViewWidth = 70;
+
+      compositionHelper.compositionstart();
+      compositionHelper.compositionupdate({ data: 'dangzhe' });
+
+      assert.equal(compositionView.style.left, '30px');
+      assert.equal(compositionView.style.top, '40px');
+      assert.equal(compositionView.style.maxWidth, '100px');
+      assert.equal(textarea.style.left, '30px');
+      assert.equal(textarea.style.top, '40px');
+      assert.equal(textarea.style.width, '70px');
+    });
+
+    it('Should keep the composition anchor stable while terminal output moves the cursor', () => {
+      bufferService.buffer.x = 9;
+      bufferService.buffer.y = 2;
+      compositionViewWidth = 70;
+      compositionHelper.compositionstart();
+      compositionHelper.compositionupdate({ data: 'dangzhe' });
+
+      bufferService.buffer.x = 1;
+      bufferService.buffer.y = 4;
+      compositionHelper.updateCompositionElements(true);
+
+      assert.equal(compositionView.style.left, '30px');
+      assert.equal(compositionView.style.top, '40px');
+      assert.equal(textarea.style.left, '30px');
+      assert.equal(textarea.style.top, '40px');
+    });
+
+    it('Should retain the tail only when a preedit is wider than the terminal', () => {
+      bufferService.buffer.x = 9;
+      compositionViewWidth = 140;
+
+      compositionHelper.compositionstart();
+      compositionHelper.compositionupdate({ data: 'an-unusually-long-composition' });
+
+      assert.equal(compositionView.style.left, '0px');
+      assert.equal(compositionView.style.maxWidth, '100px');
+      assert.equal(compositionView.style.direction, 'rtl');
+      assert.equal(textarea.style.left, '0px');
+      assert.equal(textarea.style.width, '100px');
+    });
   });
 
   describe('Input', () => {

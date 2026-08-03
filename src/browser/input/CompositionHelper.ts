@@ -12,6 +12,11 @@ interface IPosition {
   end: number;
 }
 
+interface ICompositionAnchor {
+  x: number;
+  y: number;
+}
+
 type CommittedTextInputEvent = Pick<InputEvent, 'data' | 'inputType'> & {
   data: string;
   inputType: 'insertText' | 'insertFromComposition';
@@ -40,6 +45,13 @@ export class CompositionHelper {
    * The position within the input textarea's value of the current composition.
    */
   private _compositionPosition: IPosition;
+
+  /**
+   * The viewport cell where the current composition began. Terminal output can move the live
+   * buffer cursor while an IME still owns the input, but that must not move the preedit or native
+   * candidate window out from under the user.
+   */
+  private _compositionAnchor: ICompositionAnchor | undefined;
 
   /**
    * Text that existed after the composing range when composition started.
@@ -105,6 +117,11 @@ export class CompositionHelper {
     this._compositionPosition.start = Math.min(start, end);
     this._compositionPosition.end = Math.max(start, end);
     this._compositionSuffix = this._textarea.value.substring(this._compositionPosition.end);
+    const buffer = this._bufferService.buffer;
+    this._compositionAnchor = buffer.isCursorInViewport ? {
+      x: Math.min(buffer.x, this._bufferService.cols - 1),
+      y: buffer.y
+    } : undefined;
     this._compositionView.textContent = '';
     this._dataAlreadySent = '';
     this._compositionView.classList.add('active');
@@ -166,6 +183,7 @@ export class CompositionHelper {
     this._isSendingComposition = false;
     if (this._isComposing) {
       this._isComposing = false;
+      this._compositionAnchor = undefined;
       this._compositionView.classList.remove('active');
     }
 
@@ -236,6 +254,7 @@ export class CompositionHelper {
   private _finalizeComposition(waitForPropagation: boolean): void {
     this._compositionView.classList.remove('active');
     this._isComposing = false;
+    this._compositionAnchor = undefined;
 
     if (!waitForPropagation) {
       // Cancel any delayed composition send requests and send the input immediately.
@@ -371,29 +390,39 @@ export class CompositionHelper {
       return;
     }
 
-    if (this._bufferService.buffer.isCursorInViewport) {
-      const cursorX = Math.min(this._bufferService.buffer.x, this._bufferService.cols - 1);
+    const buffer = this._bufferService.buffer;
+    const anchor = this._compositionAnchor ?? (buffer.isCursorInViewport ? {
+      x: Math.min(buffer.x, this._bufferService.cols - 1),
+      y: buffer.y
+    } : undefined);
+    if (anchor) {
+      const cursorX = Math.min(anchor.x, this._bufferService.cols - 1);
+      const cursorY = Math.min(anchor.y, this._bufferService.rows - 1);
 
       const cellHeight = this._renderService.dimensions.css.cell.height;
-      const cursorTop = this._bufferService.buffer.y * this._renderService.dimensions.css.cell.height;
+      const cursorTop = cursorY * this._renderService.dimensions.css.cell.height;
       const cursorLeft = cursorX * this._renderService.dimensions.css.cell.width;
 
-      this._compositionView.style.left = cursorLeft + 'px';
       this._compositionView.style.top = cursorTop + 'px';
       this._compositionView.style.height = cellHeight + 'px';
       this._compositionView.style.lineHeight = cellHeight + 'px';
       this._compositionView.style.fontFamily = this._optionsService.rawOptions.fontFamily;
       this._compositionView.style.fontSize = this._optionsService.rawOptions.fontSize + 'px';
-      // Limit the composition view width to the space between the cursor and
-      // the terminal's right edge, preventing it from overflowing the terminal.
-      const maxWidth = this._bufferService.cols * this._renderService.dimensions.css.cell.width - cursorLeft;
-      this._compositionView.style.maxWidth = maxWidth + 'px';
+      // Keep the whole preedit visible whenever it fits in the terminal. Starting the view at the
+      // cursor and limiting it to the remaining right-hand cells hides almost the entire preedit
+      // when composition begins in the last column. Instead, measure it against the whole terminal
+      // and shift it left just enough for its right edge to fit. A composition wider than the
+      // terminal is still clipped, with direction=rtl retaining the actively edited tail.
+      const terminalWidth = this._bufferService.cols * this._renderService.dimensions.css.cell.width;
+      this._compositionView.style.maxWidth = terminalWidth + 'px';
       this._compositionView.style.overflow = 'hidden';
       this._compositionView.style.direction = 'rtl';
-      // Sync the textarea to the exact position of the composition view so the IME knows where the
-      // text is.
       const compositionViewBounds = this._compositionView.getBoundingClientRect();
-      this._textarea.style.left = cursorLeft + 'px';
+      const compositionLeft = Math.max(0, Math.min(cursorLeft, terminalWidth - compositionViewBounds.width));
+      this._compositionView.style.left = compositionLeft + 'px';
+      // Sync the textarea to the exact position of the composition view so the IME knows where the
+      // visible preedit ends and can anchor its candidate window there.
+      this._textarea.style.left = compositionLeft + 'px';
       this._textarea.style.top = cursorTop + 'px';
       // Ensure the text area is at least 1x1, otherwise certain IMEs may break
       this._textarea.style.width = Math.max(compositionViewBounds.width, 1) + 'px';
