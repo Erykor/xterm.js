@@ -99,6 +99,28 @@ test.describe('API Integration Tests', () => {
     );
   });
 
+  test('synchronized output keeps the viewport scroll model at the buffer frontier', async () => {
+    await openTerminal(ctx, { rows: 5 });
+    await ctx.proxy.write(Array.from({ length: 11 }, (_, i) => `${i}\r\n`).join(''));
+    await ctx.page.evaluate(() => {
+      (window as any).__viewportScrollAmount = undefined;
+      (window as any).__viewportFrontier = new Promise<void>(() => {});
+      (window as any).term.attachCustomViewportScrollHandler(
+        (amount: number) => {
+          (window as any).__viewportScrollAmount = amount;
+          return (window as any).__viewportFrontier;
+        });
+    });
+
+    await ctx.proxy.write(
+      '\x1b[?2026h' +
+      Array.from({ length: 20 }, (_, i) => `sync-${i}\r\n`).join(''),
+    );
+    await ctx.page.evaluate(() => (window as any).term.scrollLines(-2));
+
+    await pollFor(ctx.page, `window.__viewportScrollAmount`, -2);
+  });
+
   test('custom selection handler defers cell reads until its frontier', async () => {
     await openTerminal(ctx);
     await ctx.proxy.write('stable framebuffer');
