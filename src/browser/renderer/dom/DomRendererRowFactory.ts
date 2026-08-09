@@ -12,7 +12,7 @@ import { ICoreService, IDecorationService, IOptionsService } from '../../../comm
 import { channels, color } from '../../../common/Color';
 import { ICharacterJoinerService, ICoreBrowserService, IThemeService } from '../../services/Services';
 import { JoinedCellData } from '../../services/CharacterJoinerService';
-import { treatGlyphAsBackgroundColor } from '../shared/RendererUtils';
+import { shouldApplyMinimumContrast, treatGlyphAsBackgroundColor } from '../shared/RendererUtils';
 import { AttributeData } from '../../../common/buffer/AttributeData';
 import { WidthCache } from './WidthCache';
 import { IColorContrastCache } from '../../Types';
@@ -437,7 +437,7 @@ export class DomRendererRowFactory {
           if (cell.isBold() && fg < 8 && this._optionsService.rawOptions.drawBoldTextInBrightColors) {
             fg += 8;
           }
-          if (!this._applyMinimumContrast(charElement, resolvedBg, colors.ansi[fg], cell, bgOverride, undefined)) {
+          if (!this._applyMinimumContrast(charElement, resolvedBg, colors.ansi[fg], cell, bgColorMode, isInverse, bgOverride, undefined)) {
             classes.push(`xterm-fg-${fg}`);
           }
           break;
@@ -447,13 +447,13 @@ export class DomRendererRowFactory {
             (fg >>  8) & 0xFF,
             (fg      ) & 0xFF
           );
-          if (!this._applyMinimumContrast(charElement, resolvedBg, color, cell, bgOverride, fgOverride)) {
+          if (!this._applyMinimumContrast(charElement, resolvedBg, color, cell, bgColorMode, isInverse, bgOverride, fgOverride)) {
             this._addStyle(charElement, `color:#${fg.toString(16).padStart(6, '0')}`);
           }
           break;
         case Attributes.CM_DEFAULT:
         default:
-          if (!this._applyMinimumContrast(charElement, resolvedBg, colors.foreground, cell, bgOverride, fgOverride)) {
+          if (!this._applyMinimumContrast(charElement, resolvedBg, colors.foreground, cell, bgColorMode, isInverse, bgOverride, fgOverride)) {
             if (isInverse) {
               classes.push(`xterm-fg-${INVERTED_DEFAULT_COLOR}`);
             }
@@ -491,8 +491,13 @@ export class DomRendererRowFactory {
     return elements;
   }
 
-  private _applyMinimumContrast(element: HTMLElement, bg: IColor, fg: IColor, cell: ICellData, bgOverride: IColor | undefined, fgOverride: IColor | undefined): boolean {
-    if (this._optionsService.rawOptions.minimumContrastRatio === 1 || treatGlyphAsBackgroundColor(cell.getCode())) {
+  private _applyMinimumContrast(element: HTMLElement, bg: IColor, fg: IColor, cell: ICellData, bgColorMode: number, isInverse: boolean, bgOverride: IColor | undefined, fgOverride: IColor | undefined): boolean {
+    if (!shouldApplyMinimumContrast(
+      this._optionsService.rawOptions.minimumContrastRatio,
+      this._optionsService.rawOptions.minimumContrastRatioOnDefaultBackground,
+      bgColorMode === Attributes.CM_DEFAULT && !isInverse,
+      treatGlyphAsBackgroundColor(cell.getCode())
+    )) {
       return false;
     }
 

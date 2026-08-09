@@ -64,6 +64,23 @@ export function treatGlyphAsBackgroundColor(codepoint: number): boolean {
   return isPowerlineGlyph(codepoint) || isBoxOrBlockGlyph(codepoint);
 }
 
+/**
+ * Whether minimum foreground/background contrast correction applies to a
+ * rendered cell. Embedders may preserve intentional foreground effects on
+ * the terminal's default background while still correcting text drawn over
+ * explicit application, decoration, selection, or inverse backgrounds.
+ */
+export function shouldApplyMinimumContrast(
+  minimumContrastRatio: number,
+  minimumContrastRatioOnDefaultBackground: boolean,
+  isDefaultBackground: boolean,
+  excludeFromContrastRatioDemands: boolean
+): boolean {
+  return minimumContrastRatio !== 1 &&
+    !excludeFromContrastRatioDemands &&
+    (minimumContrastRatioOnDefaultBackground || !isDefaultBackground);
+}
+
 export function createRenderDimensions(): IRenderDimensions {
   return {
     css: {

@@ -19,6 +19,7 @@ export function injectSharedRendererTests(ctx: ISharedRendererTestContext): void
     await ctx.value.proxy.reset();
     ctx.value.page.evaluate(`
       window.term.options.minimumContrastRatio = 1;
+      window.term.options.minimumContrastRatioOnDefaultBackground = true;
       window.term.options.allowTransparency = false;
       window.term.options.theme = undefined;
     `);
@@ -739,6 +740,17 @@ export function injectSharedRendererTests(ctx: ISharedRendererTestContext): void
   });
 
   test.describe('minimumContrastRatio', async () => {
+    test('can preserve foreground colors on the default background while correcting explicit backgrounds', async () => {
+      await ctx.value.page.evaluate(`
+        window.term.options.theme = { background: '#0f172a' };
+        window.term.options.minimumContrastRatio = 7;
+        window.term.options.minimumContrastRatioOnDefaultBackground = false;
+      `);
+      await ctx.value.proxy.write(`\x1b[38;2;60;60;60m■\x1b[48;2;15;23;42m■`);
+      await pollFor(ctx.value.page, () => getCellColor(ctx.value, 1, 1), [60, 60, 60, 255]);
+      await pollFor(ctx.value.page, () => getCellColor(ctx.value, 2, 1), [165, 165, 165, 255]);
+    });
+
     test('should adjust 0-15 colors on black background', async () => {
       const theme: ITheme = {
         black: '#2e3436',

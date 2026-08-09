@@ -48,6 +48,9 @@ export function generateConfig(deviceCellWidth: number, deviceCellHeight: number
     allowTransparency: options.allowTransparency,
     drawBoldTextInBrightColors: options.drawBoldTextInBrightColors,
     minimumContrastRatio: options.minimumContrastRatio,
+    // Keep the historical behavior when this addon is paired temporarily
+    // with a core build that predates the option.
+    minimumContrastRatioOnDefaultBackground: options.minimumContrastRatioOnDefaultBackground !== false,
     colors: clonedColors
   };
 }
@@ -74,6 +77,7 @@ export function configEquals(a: ICharAtlasConfig, b: ICharAtlasConfig): boolean 
       a.deviceCharHeight === b.deviceCharHeight &&
       a.drawBoldTextInBrightColors === b.drawBoldTextInBrightColors &&
       a.minimumContrastRatio === b.minimumContrastRatio &&
+      a.minimumContrastRatioOnDefaultBackground === b.minimumContrastRatioOnDefaultBackground &&
       a.colors.foreground.rgba === b.colors.foreground.rgba &&
       a.colors.background.rgba === b.colors.background.rgba;
 }

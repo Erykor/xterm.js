@@ -228,6 +228,7 @@ export interface ITerminalOptions {
   macOptionIsMeta?: boolean;
   macOptionClickForcesSelection?: boolean;
   minimumContrastRatio?: number;
+  minimumContrastRatioOnDefaultBackground?: boolean;
   mouseEventsRequireAlt?: boolean;
   reflowCursorLine?: boolean;
   rescaleOverlappingGlyphs?: boolean;

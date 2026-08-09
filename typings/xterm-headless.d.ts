@@ -137,6 +137,17 @@ declare module '@xterm/headless' {
     minimumContrastRatio?: number;
 
     /**
+     * Whether `minimumContrastRatio` applies when the cell uses the terminal's
+     * default background. Disable this to preserve intentional foreground
+     * effects such as low-contrast fades and shimmers on the default terminal
+     * surface while retaining contrast correction on explicit application,
+     * decoration and selection backgrounds.
+     *
+     * Defaults to true.
+     */
+    minimumContrastRatioOnDefaultBackground?: boolean;
+
+    /**
      * When enabled and the terminal is in mouse events mode, mouse click, drag,
      * and move events are only sent to the underlying application when the alt
      * key is held. The alt key is not included in the mouse reports sent to the

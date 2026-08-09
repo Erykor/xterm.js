@@ -104,6 +104,7 @@ export class RenderService extends Disposable implements IRenderService {
       'fontWeight',
       'fontWeightBold',
       'minimumContrastRatio',
+      'minimumContrastRatioOnDefaultBackground',
       'rescaleOverlappingGlyphs'
     ], () => {
       this.clear();

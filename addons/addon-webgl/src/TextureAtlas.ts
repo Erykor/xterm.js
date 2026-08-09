@@ -6,7 +6,7 @@
 import { IColorContrastCache } from 'browser/Types';
 import { DIM_OPACITY, TEXT_BASELINE } from './Constants';
 import { tryDrawCustomGlyph } from './customGlyphs/CustomGlyphRasterizer';
-import { computeNextVariantOffset, treatGlyphAsBackgroundColor, isPowerlineGlyph, isRestrictedPowerlineGlyph, throwIfFalsy } from 'browser/renderer/shared/RendererUtils';
+import { computeNextVariantOffset, shouldApplyMinimumContrast, treatGlyphAsBackgroundColor, isPowerlineGlyph, isRestrictedPowerlineGlyph, throwIfFalsy } from 'browser/renderer/shared/RendererUtils';
 import { IBoundingBox, ICharAtlasConfig, IRasterizedGlyph, ITextureAtlas } from './Types';
 import { NULL_COLOR, channels, color, rgba } from 'common/Color';
 import { FourKeyMap } from 'common/MultiKeyMap';
@@ -421,7 +421,12 @@ export class TextureAtlas implements ITextureAtlas {
   }
 
   private _getMinimumContrastColor(bg: number, bgColorMode: number, bgColor: number, fg: number, fgColorMode: number, fgColor: number, inverse: boolean, bold: boolean, dim: boolean, excludeFromContrastRatioDemands: boolean): IColor | undefined {
-    if (this._config.minimumContrastRatio === 1 || excludeFromContrastRatioDemands) {
+    if (!shouldApplyMinimumContrast(
+      this._config.minimumContrastRatio,
+      this._config.minimumContrastRatioOnDefaultBackground,
+      bgColorMode === Attributes.CM_DEFAULT && !inverse,
+      excludeFromContrastRatioDemands
+    )) {
       return undefined;
     }
 

@@ -4,10 +4,11 @@
  */
 
 import { assert } from 'chai';
-import { configEquals } from './CharAtlasUtils';
+import { configEquals, generateConfig } from './CharAtlasUtils';
 import { ICharAtlasConfig } from './Types';
 import { NULL_COLOR } from 'common/Color';
 import { IColor } from 'common/Types';
+import { ITerminalOptions } from '@xterm/xterm';
 
 function createTestConfig(overrides: Partial<ICharAtlasConfig> = {}): ICharAtlasConfig {
   const color: IColor = { css: '#ffffff', rgba: 0xffffffff };
@@ -53,12 +54,24 @@ function createTestConfig(overrides: Partial<ICharAtlasConfig> = {}): ICharAtlas
     allowTransparency: false,
     drawBoldTextInBrightColors: true,
     minimumContrastRatio: 1,
+    minimumContrastRatioOnDefaultBackground: true,
     colors,
     ...overrides
   };
 }
 
 describe('CharAtlasUtils', () => {
+  describe('generateConfig', () => {
+    it('preserves default-background correction with an older core options object', () => {
+      const options = {
+        minimumContrastRatio: 7,
+        minimumContrastRatioOnDefaultBackground: undefined
+      } as unknown as Required<ITerminalOptions>;
+      const config = generateConfig(10, 20, 8, 16, options, createTestConfig().colors, 1, 4096);
+      assert.isTrue(config.minimumContrastRatioOnDefaultBackground);
+    });
+  });
+
   describe('configEquals', () => {
     it('should return true for identical configs', () => {
       const a = createTestConfig();
@@ -81,6 +94,12 @@ describe('CharAtlasUtils', () => {
     it('should return false when deviceCellHeight differs', () => {
       const a = createTestConfig();
       const b = createTestConfig({ deviceCellHeight: 21 });
+      assert.ok(!configEquals(a, b));
+    });
+
+    it('should return false when default-background contrast policy differs', () => {
+      const a = createTestConfig();
+      const b = createTestConfig({ minimumContrastRatioOnDefaultBackground: false });
       assert.ok(!configEquals(a, b));
     });
   });
