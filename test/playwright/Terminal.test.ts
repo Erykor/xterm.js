@@ -832,6 +832,98 @@ test.describe('API Integration Tests', () => {
       deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['A', '，']);
     });
 
+    test('onData lets Apple mobile input win over printable keypress in either order', async () => {
+      await openTerminal(ctx);
+      await ctx.page.evaluate(`
+        window.calls = [];
+        window.term.onData(e => calls.push(e));
+        window.term._core.browser = {
+          ...window.term._core.browser,
+          isIpad: false,
+          isIphone: true
+        };
+      `);
+      await ctx.page.evaluate(`(async () => {
+        const textarea = document.querySelector('.xterm-helper-textarea');
+        const keydown = (key, code, keyCode) => {
+          const event = new KeyboardEvent('keydown', {
+            key,
+            code,
+            bubbles: true,
+            cancelable: true
+          });
+          Object.defineProperty(event, 'keyCode', { value: keyCode });
+          textarea.dispatchEvent(event);
+        };
+        const keypress = (key, code, keyCode) => {
+          const event = new KeyboardEvent('keypress', {
+            key,
+            code,
+            bubbles: true,
+            cancelable: true
+          });
+          Object.defineProperties(event, {
+            keyCode: { value: keyCode },
+            charCode: { value: keyCode },
+            which: { value: keyCode }
+          });
+          textarea.dispatchEvent(event);
+        };
+        const keyup = (key, code, keyCode) => {
+          const event = new KeyboardEvent('keyup', {
+            key,
+            code,
+            bubbles: true
+          });
+          Object.defineProperty(event, 'keyCode', { value: keyCode });
+          textarea.dispatchEvent(event);
+        };
+        const input = data => {
+          textarea.value = data;
+          textarea.setSelectionRange(data.length, data.length);
+          textarea.dispatchEvent(new InputEvent('input', {
+            data,
+            inputType: 'insertText',
+            bubbles: true,
+            composed: true
+          }));
+        };
+
+        // WebKit can deliver input before the legacy keypress.
+        keydown('A', 'KeyA', 65);
+        input('A');
+        keypress('A', 'KeyA', 65);
+        keyup('A', 'KeyA', 65);
+
+        // It can also put input in a later task than keypress.
+        keydown('B', 'KeyB', 66);
+        keypress('B', 'KeyB', 66);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        input('B');
+        keyup('B', 'KeyB', 66);
+
+        // Space uses the same fallback path without the uppercase hack.
+        keydown(' ', 'Space', 32);
+        input(' ');
+        keypress(' ', 'Space', 32);
+        keyup(' ', 'Space', 32);
+
+        // WebKit's dead-key cancellation keypress can describe the committed
+        // accent instead of the physical sequel. Native input still carries
+        // the authoritative inserted character.
+        keydown('~/', 'Digit7', 0);
+        input('/');
+        keypress('~/', 'Digit7', 126);
+        keyup('/', 'Digit7', 47);
+      })()`);
+      await timeout(20);
+      deepStrictEqual(await ctx.page.evaluate(`window.calls`), ['A', 'B', ' ', '/']);
+      strictEqual(
+        await ctx.page.evaluate(`document.querySelector('.xterm-helper-textarea').value`),
+        ''
+      );
+    });
+
     test('onKey', async () => {
       await openTerminal(ctx);
       await ctx.page.evaluate(`

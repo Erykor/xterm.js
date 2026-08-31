@@ -7,6 +7,7 @@ interface INavigator {
   userAgent: string;
   language: string;
   platform: string;
+  maxTouchPoints?: number;
 }
 
 // We're declaring a navigator global here as we expect it in all runtimes (node and browser), but
@@ -48,6 +49,16 @@ export function getSafariVersion(): number {
 // and ISO third level shifts.
 // http://stackoverflow.com/q/19877924/577598
 export const isMac = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'].includes(platform);
+// iPadOS can request a desktop user agent and identify itself as MacIntel.
+// Touch capability is the remaining stable distinction from desktop macOS.
+export const isIpad = platform === 'iPad' || /\biPad\b/.test(userAgent) || (
+  platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1
+);
+export const isIphone = (
+  platform === 'iPhone' ||
+  platform === 'iPod' ||
+  /\b(?:iPhone|iPod)\b/.test(userAgent)
+);
 export const isWindows = ['Windows', 'Win16', 'Win32', 'WinCE'].includes(platform);
 export const isLinux = platform.indexOf('Linux') >= 0;
 // Note that when this is true, isLinux will also be true.

@@ -175,6 +175,118 @@ describe('Terminal', () => {
     });
   });
 
+  describe('Apple mobile keypress fallback', () => {
+    let originalBrowser: IBrowser;
+
+    beforeEach(() => {
+      originalBrowser = term.browser;
+      term.browser = {
+        ...originalBrowser,
+        isIpad: false,
+        isIphone: true
+      };
+    });
+
+    afterEach(() => term.browser = originalBrowser);
+
+    it('should leave unmodified printable keypresses to the input event', () => {
+      let emitted = '';
+      term.onData(data => emitted += data);
+
+      assert.isFalse(term.keyPress({
+        type: 'keypress',
+        key: 'A',
+        keyCode: 65,
+        charCode: 65,
+        which: 65,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false
+      }));
+      assert.equal(emitted, '');
+    });
+
+    it('should use the same native input path on iPadOS', () => {
+      term.browser = {
+        ...term.browser,
+        isIpad: true,
+        isIphone: false
+      };
+      let emitted = '';
+      term.onData(data => emitted += data);
+
+      assert.isFalse(term.keyPress({
+        type: 'keypress',
+        key: ' ',
+        keyCode: 32,
+        charCode: 32,
+        which: 32,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false
+      }));
+      assert.equal(emitted, '');
+    });
+
+    it('should leave iPadOS third-level-shift text to the input event', () => {
+      term.browser = {
+        ...term.browser,
+        isMac: true,
+        isIpad: true,
+        isIphone: false
+      };
+      let emitted = '';
+      term.onData(data => emitted += data);
+
+      assert.isFalse(term.keyPress({
+        type: 'keypress',
+        key: 'å',
+        keyCode: 229,
+        charCode: 229,
+        which: 229,
+        ctrlKey: false,
+        altKey: true,
+        metaKey: false
+      }));
+      assert.equal(emitted, '');
+    });
+
+    it('should not classify control-character keypresses as native text', () => {
+      let emitted = '';
+      term.onData(data => emitted += data);
+
+      assert.isTrue(term.keyPress({
+        type: 'keypress',
+        key: 'Enter',
+        keyCode: 13,
+        charCode: 13,
+        which: 13,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false
+      }));
+      assert.equal(emitted, '\r');
+    });
+
+    it('should retain the screen-reader keypress fallback', () => {
+      let emitted = '';
+      term.onData(data => emitted += data);
+
+      term.options.screenReaderMode = true;
+      assert.isTrue(term.keyPress({
+        type: 'keypress',
+        key: 'A',
+        keyCode: 65,
+        charCode: 65,
+        which: 65,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false
+      }));
+      assert.equal(emitted, 'A');
+    });
+  });
+
   describe('clear', () => {
     it('should clear a buffer equal to rows', () => {
       const promptLine = term.buffer.lines.get(term.buffer.ybase + term.buffer.y);

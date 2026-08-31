@@ -1099,6 +1099,26 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
       return false;
     }
 
+    // iOS/iPadOS commits printable text through the authoritative input event
+    // even when xterm's legacy keypress fallback also runs. WebKit may deliver
+    // those events in either order or in separate tasks, so a timing-based
+    // echo window cannot reliably deduplicate them. Keep the native keypress
+    // uncancelled, but do not emit it here; the resulting input event owns
+    // shifted letters, spaces, long-press accents and IME text. Screen reader
+    // mode still needs the legacy path because _inputEvent deliberately lets
+    // its input event bubble without emitting terminal data.
+    if (
+      (this.browser.isIpad || this.browser.isIphone) &&
+      !this.optionsService.rawOptions.screenReaderMode &&
+      (
+        (!ev.ctrlKey && !ev.altKey && !ev.metaKey) ||
+        this._isThirdLevelShift(this.browser, ev)
+      ) &&
+      (ev.key?.length === 1 || ev.charCode >= 32)
+    ) {
+      return false;
+    }
+
     if (ev.charCode) {
       key = ev.charCode;
     } else if (ev.which === null || ev.which === undefined) {
