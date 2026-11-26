@@ -208,9 +208,11 @@ export class CompositionHelper {
   /**
    * Handles the keydown event, routing any necessary events to the CompositionHelper functions.
    * @param ev The keydown event.
+   * @param isPhysicalKeyRepeat Whether the event repeats a held physical key despite carrying the
+   *   "composition character" keyCode, so no text will arrive for it through the textarea.
    * @returns Whether the Terminal should continue processing the keydown event.
    */
-  public keydown(ev: KeyboardEvent): boolean {
+  public keydown(ev: KeyboardEvent, isPhysicalKeyRepeat: boolean = false): boolean {
     this._cancelTextareaCleanup();
     if (!this._isComposing && !this._isSendingComposition) {
       // This is a strict transaction boundary. Clear settled residue before the new key can ask
@@ -233,7 +235,7 @@ export class CompositionHelper {
       this._finalizeComposition(false);
     }
 
-    if (ev.keyCode === 229) {
+    if (ev.keyCode === 229 && !isPhysicalKeyRepeat) {
       // If the "composition character" is used but gets to this point it means a non-composition
       // character (eg. numbers and punctuation) was pressed when the IME was active.
       this._handleAnyTextareaChanges();

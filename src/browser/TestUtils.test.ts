@@ -375,7 +375,7 @@ export class MockCompositionHelper implements ICompositionHelper {
   public updateCompositionElements(dontRecurse?: boolean): void {
     throw new Error('Method not implemented.');
   }
-  public keydown(ev: KeyboardEvent): boolean {
+  public keydown(ev: KeyboardEvent, isPhysicalKeyRepeat?: boolean): boolean {
     return true;
   }
 }

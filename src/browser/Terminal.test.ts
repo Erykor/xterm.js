@@ -287,6 +287,105 @@ describe('Terminal', () => {
     });
   });
 
+  describe('macOS press-and-hold repeat', () => {
+    let originalBrowser: IBrowser;
+    let emitted: string;
+    let isComposing: boolean;
+    let prevented: number;
+
+    function keyDown(key: string, code: string, keyCode: number, repeat: boolean, modifiers: Partial<KeyboardEvent> = {}): boolean | undefined {
+      return term.keyDown({
+        type: 'keydown',
+        key,
+        code,
+        keyCode,
+        repeat,
+        isComposing: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+        shiftKey: false,
+        preventDefault: () => prevented++,
+        stopPropagation: () => { },
+        ...modifiers
+      });
+    }
+
+    beforeEach(() => {
+      originalBrowser = term.browser;
+      term.browser = { ...originalBrowser, isMac: true, isIpad: false, isIphone: false };
+      (term as any).textarea = { value: '' };
+      // Like the real helper, hand a keydown-229 to the textarea fallback unless told otherwise.
+      isComposing = false;
+      (term as any)._compositionHelper = {
+        get isComposing(): boolean { return isComposing; },
+        keydown: (ev: KeyboardEvent, isPhysicalKeyRepeat?: boolean) => !isComposing && (ev.keyCode !== 229 || !!isPhysicalKeyRepeat)
+      };
+      emitted = '';
+      prevented = 0;
+      term.onData(data => emitted += data);
+    });
+
+    afterEach(() => term.browser = originalBrowser);
+
+    it('should repeat a held key whose repeats arrive as keyCode 229', () => {
+      assert.isFalse(keyDown('j', 'KeyJ', 74, false));
+      assert.isFalse(keyDown('j', 'KeyJ', 229, true));
+      assert.isFalse(keyDown('j', 'KeyJ', 229, true));
+      assert.equal(emitted, 'jjj');
+      assert.equal(prevented, 3);
+    });
+
+    it('should repeat a held shifted letter without waiting for a keypress', () => {
+      // The initial uppercase keydown is left to its keypress.
+      assert.isTrue(keyDown('J', 'KeyJ', 74, false, { shiftKey: true }));
+      assert.isFalse(keyDown('J', 'KeyJ', 229, true, { shiftKey: true }));
+      assert.equal(emitted, 'J');
+    });
+
+    it('should leave a key the input method owned from its first keydown', () => {
+      assert.isFalse(keyDown('.', 'Period', 229, false));
+      assert.isFalse(keyDown('.', 'Period', 229, true));
+      assert.equal(emitted, '');
+      assert.equal(prevented, 0);
+    });
+
+    it('should leave repeats of another key than the one physically pressed', () => {
+      assert.isFalse(keyDown('j', 'KeyJ', 74, false));
+      assert.isFalse(keyDown('k', 'KeyK', 229, true));
+      assert.equal(emitted, 'j');
+    });
+
+    it('should leave repeats that arrive during a composition', () => {
+      assert.isFalse(keyDown('j', 'KeyJ', 74, false));
+      isComposing = true;
+      assert.isFalse(keyDown('j', 'KeyJ', 229, true));
+      assert.equal(emitted, 'j');
+    });
+
+    it('should leave repeats flagged as composing by the browser', () => {
+      assert.isFalse(keyDown('j', 'KeyJ', 74, false));
+      assert.isFalse(keyDown('j', 'KeyJ', 229, true, { isComposing: true }));
+      assert.equal(emitted, 'j');
+    });
+
+    it('should leave non-text keys', () => {
+      assert.isFalse(keyDown('ArrowDown', 'ArrowDown', 40, false));
+      assert.isFalse(keyDown('Process', 'ArrowDown', 229, true));
+      assert.equal(emitted, '\x1b[B');
+    });
+
+    it('should not apply outside desktop macOS', () => {
+      for (const browser of [{ isMac: false, isIpad: false }, { isMac: true, isIpad: true }]) {
+        term.browser = { ...term.browser, ...browser };
+        emitted = '';
+        assert.isFalse(keyDown('j', 'KeyJ', 74, false));
+        assert.isFalse(keyDown('j', 'KeyJ', 229, true));
+        assert.equal(emitted, 'j');
+      }
+    });
+  });
+
   describe('clear', () => {
     it('should clear a buffer equal to rows', () => {
       const promptLine = term.buffer.lines.get(term.buffer.ybase + term.buffer.y);

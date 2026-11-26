@@ -110,6 +110,8 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
    * commit from being swallowed when keyup is delayed or omitted.
    */
   private _pendingTextInputEcho: string | undefined;
+  /** `code` of the key whose initial keydown arrived as an ordinary physical key. */
+  private _physicalKeyDownCode: string | undefined;
   private _pendingTextInputEchoGeneration: number = 0;
 
   /**
@@ -935,6 +937,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
   protected _keyDown(event: KeyboardEvent): boolean | undefined {
     this._keyDownHandled = false;
     this._setPendingTextInputEcho(undefined);
+    const isPressAndHoldRepeat = this._isPressAndHoldRepeat(event);
 
     if (this._customKeyEventHandler && this._customKeyEventHandler(event) === false) {
       return false;
@@ -943,7 +946,7 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     // Ignore composing with Alt key on Mac when macOptionIsMeta is enabled
     const shouldIgnoreComposition = this.browser.isMac && this.options.macOptionIsMeta && event.altKey;
 
-    if (!shouldIgnoreComposition && !this._compositionHelper!.keydown(event)) {
+    if (!shouldIgnoreComposition && !this._compositionHelper!.keydown(event, isPressAndHoldRepeat)) {
       if (this.options.scrollOnUserInput && this.buffer.ybase !== this.buffer.ydisp) {
         this.scrollToBottom(true);
       }
@@ -987,7 +990,8 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     // HACK: Process A-Z in the keypress event to fix an issue with macOS IMEs where lower case
     // letters cannot be input while caps lock is on. Skip this hack when using kitty protocol
     // or Win32 input mode as they need to send proper sequences for all key events.
-    if (!this._keyboardService.useKitty && !this._keyboardService.useWin32InputMode && event.key && !event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
+    // A press-and-hold repeat has no keypress to defer to.
+    if (!isPressAndHoldRepeat && !this._keyboardService.useKitty && !this._keyboardService.useWin32InputMode && event.key && !event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
       if (event.key.charCodeAt(0) >= 65 && event.key.charCodeAt(0) <= 90) {
         return true;
       }
@@ -1022,6 +1026,27 @@ export class CoreBrowserTerminal extends CoreTerminal implements ITerminal {
     }
 
     this._keyDownHandled = true;
+  }
+
+  /**
+   * macOS answers a held letter with its accent menu instead of key repeat. WebKit still delivers
+   * the repeats, but marks them as handled by the input method (keyCode 229) although neither
+   * text nor a composition follows, so the composition fallback would wait for a textarea change
+   * that never comes and the key would not repeat. An IME that really owns the key marks its
+   * initial keydown 229 as well; only a key that started as an ordinary physical key qualifies.
+   */
+  private _isPressAndHoldRepeat(ev: KeyboardEvent): boolean {
+    const isComposing = ev.isComposing || !!this._compositionHelper?.isComposing;
+    if (!ev.repeat) {
+      this._physicalKeyDownCode = ev.keyCode !== 229 && !isComposing ? ev.code : undefined;
+      return false;
+    }
+    return this.browser.isMac && !this.browser.isIpad &&
+      ev.keyCode === 229 &&
+      !!ev.code && ev.code === this._physicalKeyDownCode &&
+      !isComposing &&
+      !ev.ctrlKey && !ev.altKey && !ev.metaKey &&
+      ev.key?.length === 1;
   }
 
   private _isThirdLevelShift(browser: IBrowser, ev: KeyboardEvent): boolean {

@@ -46,7 +46,7 @@ export interface ICompositionHelper {
   compositionend(): void;
   handleInputEvent(ev: Pick<InputEvent, 'data' | 'inputType'>, wasAlreadySent: boolean): boolean;
   updateCompositionElements(dontRecurse?: boolean): void;
-  keydown(ev: KeyboardEvent): boolean;
+  keydown(ev: KeyboardEvent, isPhysicalKeyRepeat?: boolean): boolean;
 }
 
 export interface IBrowser {

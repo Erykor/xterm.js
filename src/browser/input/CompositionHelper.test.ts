@@ -120,6 +120,16 @@ describe('CompositionHelper', () => {
       }, 0);
     });
 
+    it('Should let a physical key repeat through despite the composition keyCode', () => {
+      assert.isFalse(compositionHelper.keydown({ keyCode: 229 } as KeyboardEvent));
+      assert.isTrue(compositionHelper.keydown({ keyCode: 229 } as KeyboardEvent, true));
+    });
+
+    it('Should keep a composition ahead of a physical key repeat', () => {
+      compositionHelper.compositionstart();
+      assert.isFalse(compositionHelper.keydown({ keyCode: 229 } as KeyboardEvent, true));
+    });
+
     it('Should prefer committed input over a pending keydown-229 textarea diff', (done) => {
       assert.isFalse(compositionHelper.keydown({ keyCode: 229 } as KeyboardEvent));
       textarea.value = '，';
