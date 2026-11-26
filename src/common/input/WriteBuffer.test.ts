@@ -120,6 +120,111 @@ describe('WriteBuffer', () => {
         done();
       });
     });
+    it('flushSync does not parse chunks the write loop already parsed', done => {
+      // More chunks than one 12 ms slice can take: the first slice ends with
+      // parsed chunks still retained in front of the read offset.
+      const slow = new WriteBuffer(data => {
+        stack.push(data);
+        const until = Date.now() + 5;
+        while (Date.now() < until) { /* burn the time slice */ }
+      });
+      const total = 8;
+      for (let i = 0; i < total; i++) {
+        slow.write(`chunk-${i}`, () => { cbStack.push(`cb-${i}`); });
+      }
+      const expected = Array.from({ length: total }, (_, i) => `chunk-${i}`);
+      const waitForFirstSlice = (): void => {
+        if (stack.length === 0) {
+          setTimeout(waitForFirstSlice, 0);
+          return;
+        }
+        assert.isBelow(stack.length, total, 'the first slice must not finish the queue');
+        slow.flushSync();
+        assert.deepEqual(stack, expected);
+        assert.deepEqual(cbStack, expected.map((_, i) => `cb-${i}`));
+        // The continuation the first slice scheduled finds nothing to repeat.
+        setTimeout(() => {
+          assert.deepEqual(stack, expected);
+          assert.deepEqual(cbStack, expected.map((_, i) => `cb-${i}`));
+          done();
+        }, 30);
+      };
+      waitForFirstSlice();
+    });
+    it('flushSync inside a write callback parses every chunk exactly once', done => {
+      wb.write('a', () => {
+        cbStack.push('a');
+        wb.flushSync();
+        assert.deepEqual(stack, ['a', 'b', 'c']);
+        assert.deepEqual(cbStack, ['a', 'b', 'c']);
+      });
+      wb.write('b', () => { cbStack.push('b'); });
+      wb.write('c', () => { cbStack.push('c'); });
+      setTimeout(() => {
+        assert.deepEqual(stack, ['a', 'b', 'c']);
+        assert.deepEqual(cbStack, ['a', 'b', 'c']);
+        done();
+      }, 30);
+    });
+    it('a write issued after flushSync inside a write callback is not lost', done => {
+      wb.write('a', () => {
+        wb.flushSync();
+        wb.write('late', () => { cbStack.push('late'); });
+      });
+      wb.write('b');
+      setTimeout(() => {
+        assert.deepEqual(stack, ['a', 'b', 'late']);
+        assert.deepEqual(cbStack, ['late']);
+        wb.write('after', () => {
+          assert.deepEqual(stack, ['a', 'b', 'late', 'after']);
+          done();
+        });
+      }, 30);
+    });
+    it('flushSync parses a queued empty chunk and what follows it', () => {
+      wb.write('', () => { cbStack.push('empty'); });
+      wb.write('x', () => { cbStack.push('x'); });
+      wb.flushSync();
+      assert.deepEqual(stack, ['', 'x']);
+      assert.deepEqual(cbStack, ['empty', 'x']);
+    });
+    it('flushSync refuses to run while an asynchronous handler is pending', async () => {
+      let release!: (value: boolean) => void;
+      const seen: (string | Uint8Array)[] = [];
+      let suspended = false;
+      const parked = new WriteBuffer(data => {
+        if (data === 'async') {
+          if (suspended) {
+            // The continuation of the suspended chunk, not a second parse.
+            return;
+          }
+          suspended = true;
+          seen.push(data);
+          return new Promise<boolean>(resolve => { release = resolve; });
+        }
+        seen.push(data);
+      });
+      parked.write('async');
+      parked.write('next');
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      assert.deepEqual(seen, ['async']);
+      assert.throws(() => parked.flushSync(), /being parsed/);
+      // Nothing was released or repeated by the refused flush.
+      release(true);
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      assert.deepEqual(seen, ['async', 'next']);
+    });
+    it('flushSync refuses to run from inside a parser handler', () => {
+      const reentrant: WriteBuffer = new WriteBuffer(data => {
+        stack.push(data);
+        if (data === 'resize-me') {
+          assert.throws(() => reentrant.flushSync(), /being parsed/);
+        }
+      });
+      reentrant.handleUserInput();
+      reentrant.write('resize-me');
+      assert.deepEqual(stack, ['resize-me']);
+    });
     it('flushSync with no pending writes is a no-op', () => {
       wb.flushSync();
       assert.deepEqual(stack, []);

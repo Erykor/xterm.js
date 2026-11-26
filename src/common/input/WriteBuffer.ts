@@ -43,6 +43,10 @@ export class WriteBuffer extends Disposable {
   private _didUserInput = false;
   private _isPaused = false;
   private _isParsing = false;
+  /** A chunk's completion callback is running inside the write loop. */
+  private _isInCallback = false;
+  /** flushSync drained the queue from inside that callback. */
+  private _flushedInCallback = false;
   private _pausePromise: Promise<void> | undefined;
   private _resolvePause: (() => void) | undefined;
 
@@ -115,8 +119,17 @@ export class WriteBuffer extends Disposable {
    * ensure all queued data is processed before performing an operation that
    * depends upon everything being parsed like resize.
    *
-   * Note: This is unreliable with async parser handlers as it does not wait for
-   * promises to resolve.
+   * Every chunk is parsed exactly once. The queue retains chunks the write
+   * loop has already parsed — everything before its read offset and, while a
+   * completion callback runs, the chunk that callback belongs to — so those
+   * are released first instead of being parsed, and called back, again.
+   *
+   * It may be called from a write callback. Writes issued by that callback
+   * after the flush are queued normally and parsed by the write loop.
+   *
+   * @throws If a chunk is still being parsed: from inside a parser handler,
+   * or while an asynchronous handler is pending. The parser is mid-chunk then
+   * and nothing can be flushed without reordering or repeating input.
    */
   public flushSync(): void {
     if (this._store.isDisposed || this._isPaused) {
@@ -126,25 +139,46 @@ export class WriteBuffer extends Disposable {
     if (this._isSyncWriting) {
       return;
     }
+    if (this._isParsing && !this._isInCallback) {
+      throw new Error('flushSync cannot run while a chunk is being parsed');
+    }
     this._isSyncWriting = true;
 
-    // Process all pending chunks synchronously
-    let chunk: string | Uint8Array | undefined;
-    let didProcess = false;
-    while (chunk = this._writeBuffer.shift()) {
-      didProcess = true;
-      this._action(chunk);
-      const cb = this._callbacks.shift();
-      if (cb) cb();
+    // Release what the write loop has already parsed.
+    const parsed = Math.min(
+      this._writeBuffer.length,
+      this._bufferOffset + (this._isInCallback ? 1 : 0)
+    );
+    if (parsed > 0) {
+      this._writeBuffer.splice(0, parsed);
+      this._callbacks.splice(0, parsed);
+    }
+    this._bufferOffset = 0;
+    if (this._isInCallback) {
+      // The write loop that called the callback must not step its offset over
+      // the rebuilt queue.
+      this._flushedInCallback = true;
     }
 
-    // Reset buffer state
-    this._pendingData = 0;
-    this._bufferOffset = 0x7FFFFFFF;
-    this._writeBuffer.length = 0;
-    this._callbacks.length = 0;
-
-    this._isSyncWriting = false;
+    // Process all pending chunks synchronously
+    let didProcess = false;
+    try {
+      while (this._writeBuffer.length > 0) {
+        const chunk = this._writeBuffer.shift()!;
+        const cb = this._callbacks.shift();
+        didProcess = true;
+        this._action(chunk);
+        if (cb) cb();
+      }
+    } finally {
+      // The queue is empty or holds only what a failed chunk left behind;
+      // either way it starts at offset zero.
+      this._pendingData = 0;
+      for (const chunk of this._writeBuffer) {
+        this._pendingData += chunk.length;
+      }
+      this._isSyncWriting = false;
+    }
     if (didProcess) {
       this._onWriteParsed.fire();
     }
@@ -357,9 +391,23 @@ export class WriteBuffer extends Disposable {
       }
 
       const cb = this._callbacks[this._bufferOffset];
-      if (cb) cb();
-      this._bufferOffset++;
-      this._pendingData -= data.length;
+      if (cb) {
+        this._isInCallback = true;
+        try {
+          cb();
+        } finally {
+          this._isInCallback = false;
+        }
+      }
+      if (this._flushedInCallback) {
+        // flushSync ran inside the callback: it released this chunk together
+        // with everything queued behind it. The queue now holds only writes
+        // issued after the flush, starting at offset zero.
+        this._flushedInCallback = false;
+      } else {
+        this._bufferOffset++;
+        this._pendingData -= data.length;
+      }
       this._isParsing = false;
 
       if (this._isPaused) {
