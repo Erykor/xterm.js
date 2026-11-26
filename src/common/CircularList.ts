@@ -73,6 +73,21 @@ export class CircularList<T> extends Disposable implements ICircularList<T> {
       return;
     }
 
+    // The scrollback ring is rebuilt on every change of the terminal's row
+    // count (maxLength is rows + scrollback), and a ring sized for a large
+    // scrollback is mostly empty. While nothing has wrapped or been trimmed
+    // from the start, every element already sits at the index it would be
+    // copied to, so only the wrap point has to move. The backing array is not
+    // grown here: a slot past its end reads as undefined, exactly as an empty
+    // slot of a freshly allocated array does, and is created when written.
+    if (this._startIndex === 0 && this._length <= newMaxLength) {
+      if (this._array.length > newMaxLength) {
+        this._array.length = newMaxLength;
+      }
+      this._maxLength = newMaxLength;
+      return;
+    }
+
     // Reconstruct array, starting at index 0. Only transfer values from the
     // indexes 0 to length.
     const newArray = new Array<T | undefined>(newMaxLength);
